@@ -1,0 +1,30 @@
+{
+  "name": "projeto-emails",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:verbose": "jest --verbose"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@sendgrid/client": "^8.1.5",
+    "@sendgrid/mail": "^8.1.5",
+    "@supabase/supabase-js": "^2.53.0",
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.0.1"
+  },
+  "devDependencies": {
+    "@jest/globals": "^30.0.5",
+    "jest": "^30.0.5",
+    "supertest": "^7.1.4"
+  }
+}

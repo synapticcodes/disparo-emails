@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Dashboard API</title>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+</head>
+<body>
+    <h1>Test Dashboard API</h1>
+    <div id="results"></div>
+    
+    <script>
+        async function testDashboardAPI() {
+            const resultsDiv = document.getElementById('results');
+            
+            try {
+                resultsDiv.innerHTML = '<p>🔐 Fazendo login...</p>';
+                
+                // Simular autenticação - em uma app real, isso seria feito via Supabase
+                const authResponse = await axios.post('https://ixroiuhpvsljxeynfrqz.supabase.co/auth/v1/token?grant_type=password', {
+                    email: 'teste@dashboard.app',
+                    password: 'dashboard123'
+                }, {
+                    headers: {
+                        'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml4cm9pdWhwdnNsanhleW5mcnF6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQwNzUyMTMsImV4cCI6MjA2OTY1MTIxM30.GggeoRijune6o5eQWQDODw5QnBfd6d1FxWKu7R8Q5FA',
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const accessToken = authResponse.data.access_token;
+                resultsDiv.innerHTML += '<p>✅ Login bem-sucedido!</p>';
+                
+                // Testar o endpoint do dashboard
+                resultsDiv.innerHTML += '<p>📊 Buscando dados do dashboard...</p>';
+                
+                const dashboardResponse = await axios.get('http://localhost:3000/api/dashboard/stats', {
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                resultsDiv.innerHTML += '<p>✅ Dashboard funcionando!</p>';
+                resultsDiv.innerHTML += '<pre>' + JSON.stringify(dashboardResponse.data, null, 2) + '</pre>';
+                
+            } catch (error) {
+                resultsDiv.innerHTML += '<p>❌ Erro: ' + (error.response?.data?.error || error.message) + '</p>';
+                console.error('Erro completo:', error);
+            }
+        }
+        
+        // Executar teste quando a página carregar
+        testDashboardAPI();
+    </script>
+</body>
+</html>
