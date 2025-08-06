@@ -2,6 +2,10 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const sgMail = require('@sendgrid/mail');
 const client = require('@sendgrid/client');
+const multer = require('multer');
+const csv = require('csv-parser');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 
@@ -20,6 +24,48 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
+// Configurar multer para upload de arquivos CSV
+const upload = multer({
+  dest: 'uploads/',
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Apenas arquivos CSV são permitidos'), false);
+    }
+  },
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB
+  }
+});
+
+// Criar diretório uploads se não existir
+if (!fs.existsSync('uploads')) {
+  fs.mkdirSync('uploads');
+}
+
+// Middleware para permitir CORS
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', 'http://localhost:3001');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
+
+// Log todas as requisições
+app.use((req, res, next) => {
+  console.log(`📨 ${req.method} ${req.path} - ${new Date().toISOString()}`);
+  if (req.path.includes('campaign')) {
+    console.log('🎯 REQUISIÇÃO DE CAMPANHA DETECTADA!', req.body);
+  }
+  next();
+});
+
 // Carrega variáveis de ambiente
 require('dotenv').config();
 
@@ -29,6 +75,17 @@ client.setApiKey(process.env.SENDGRID_API_KEY);
 
 // Configura Supabase
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+
+// Função para criar cliente Supabase autenticado
+function getAuthenticatedSupabase(accessToken) {
+  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
+    global: {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    }
+  });
+}
 
 // Função auxiliar para logs
 async function logAction(userId, action, status, details = {}, req = null) {
@@ -48,12 +105,36 @@ async function logAction(userId, action, status, details = {}, req = null) {
   }
 }
 
+// Função para formatar valor de moeda
+function formatarMoeda(valor) {
+  if (!valor && valor !== 0) return '';
+  
+  // Converter para número se for string
+  const numero = typeof valor === 'string' ? parseFloat(valor.replace(',', '.')) : valor;
+  
+  // Verificar se é um número válido
+  if (isNaN(numero)) return valor;
+  
+  // Formatar como moeda brasileira
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL'
+  }).format(numero);
+}
+
 // Função para substituir variáveis no template
-function substituirVariaveis(template, variaveis) {
+function substituirVariaveis(template, variaveis, variaveisInfo = {}) {
   let resultado = template;
   Object.keys(variaveis).forEach(chave => {
     const regex = new RegExp(`{{${chave}}}`, 'g');
-    resultado = resultado.replace(regex, variaveis[chave] || '');
+    let valorFormatado = variaveis[chave] || '';
+    
+    // Aplicar formatação baseada no tipo da variável
+    if (variaveisInfo[chave] && variaveisInfo[chave].data_type === 'currency') {
+      valorFormatado = formatarMoeda(valorFormatado);
+    }
+    
+    resultado = resultado.replace(regex, valorFormatado);
   });
   return resultado;
 }
@@ -65,6 +146,81 @@ function chunkArray(array, size) {
     chunks.push(array.slice(i, i + size));
   }
   return chunks;
+}
+
+// ========== SISTEMA DE VARIÁVEIS UNIVERSAIS ==========
+
+// Função para extrair primeiro nome de um nome completo
+function extrairPrimeiroNome(nomeCompleto) {
+  if (!nomeCompleto || typeof nomeCompleto !== 'string') return '';
+  return nomeCompleto.trim().split(' ')[0];
+}
+
+// Função para processar variáveis universais baseadas em contatos
+async function processarVariaveisUniversais(template, userId, contactId = null) {
+  try {
+    let resultado = template;
+
+    // Se não há um contato específico, retornar template sem alterações nas universais
+    if (!contactId) {
+      // Substituir por placeholders para preview
+      resultado = resultado.replace(/\{\{nome\}\}/g, '[Nome]');
+      resultado = resultado.replace(/\{\{nome_completo\}\}/g, '[Nome Completo]');
+      return resultado;
+    }
+
+    // Buscar dados do contato específico
+    const { data: contato, error } = await supabase
+      .from('contatos')
+      .select('nome, email')
+      .eq('id', contactId)
+      .eq('user_id', userId)
+      .single();
+
+    if (error || !contato) {
+      console.error('Erro ao buscar contato para variáveis universais:', error);
+      // Manter placeholders se não encontrar o contato
+      resultado = resultado.replace(/\{\{nome\}\}/g, '[Nome]');
+      resultado = resultado.replace(/\{\{nome_completo\}\}/g, '[Nome Completo]');
+      return resultado;
+    }
+
+    // Processar {{nome}} - primeiro nome
+    const primeiroNome = extrairPrimeiroNome(contato.nome);
+    resultado = resultado.replace(/\{\{nome\}\}/g, primeiroNome || '[Nome]');
+
+    // Processar {{nome_completo}} - nome completo
+    resultado = resultado.replace(/\{\{nome_completo\}\}/g, contato.nome || '[Nome Completo]');
+
+    return resultado;
+
+  } catch (error) {
+    console.error('Erro ao processar variáveis universais:', error);
+    return template; // Retornar template original em caso de erro
+  }
+}
+
+// Função para processar todas as variáveis (universais + customizadas)
+async function processarTodasVariaveis(template, userId, contactId = null, customVariables = {}) {
+  try {
+    let resultado = template;
+
+    // 1. Primeiro processar variáveis universais
+    resultado = await processarVariaveisUniversais(resultado, userId, contactId);
+
+    // 2. Depois processar variáveis customizadas
+    Object.keys(customVariables).forEach(variableName => {
+      const value = customVariables[variableName] || '';
+      const regex = new RegExp(variableName.replace(/[{}]/g, '\\$&'), 'g');
+      resultado = resultado.replace(regex, value);
+    });
+
+    return resultado;
+
+  } catch (error) {
+    console.error('Erro ao processar todas as variáveis:', error);
+    return template;
+  }
 }
 
 // Middleware de Autenticação
@@ -84,6 +240,7 @@ async function authMiddleware(req, res, next) {
     }
     
     req.user = user;
+    req.accessToken = token; // Armazenar o token para uso posterior
     next();
   } catch (error) {
     console.error('Erro no middleware de autenticação:', error);
@@ -98,6 +255,13 @@ app.get('/health', (req, res) => {
     message: 'Servidor funcionando',
     timestamp: new Date().toISOString()
   });
+});
+
+// Endpoint de teste para verificar logs
+app.post('/api/test-logs', (req, res) => {
+  console.log('🧪 ENDPOINT DE TESTE CHAMADO!');
+  console.log('Dados recebidos:', req.body);
+  res.json({ message: 'Logs funcionando!', timestamp: new Date().toISOString() });
 });
 
 // Rota de teste protegida
@@ -143,8 +307,30 @@ app.post('/api/email/send', authMiddleware, async (req, res) => {
     
     // Aplicar variáveis se fornecidas
     if (template_vars && typeof template_vars === 'object') {
-      if (html) finalHtml = substituirVariaveis(html, template_vars);
-      if (text) finalText = substituirVariaveis(text, template_vars);
+      // Buscar informações sobre os tipos das variáveis
+      const variableNames = Object.keys(template_vars);
+      let variableInfo = {};
+      
+      if (variableNames.length > 0) {
+        try {
+          const { data: variables } = await supabase
+            .from('custom_variables')
+            .select('name, data_type')
+            .eq('user_id', req.user.id)
+            .in('name', variableNames.map(name => name.replace('{{', '').replace('}}', '')));
+          
+          if (variables) {
+            variables.forEach(variable => {
+              variableInfo[variable.name] = variable;
+            });
+          }
+        } catch (error) {
+          console.error('Erro ao buscar info das variáveis:', error);
+        }
+      }
+      
+      if (html) finalHtml = substituirVariaveis(html, template_vars, variableInfo);
+      if (text) finalText = substituirVariaveis(text, template_vars, variableInfo);
     }
 
     // Configurar mensagem
@@ -164,13 +350,16 @@ app.post('/api/email/send', authMiddleware, async (req, res) => {
     // Enviar email
     await sgMail.send(msg);
     
-    // Log de sucesso
+    // Log de sucesso com detalhes completos
     await logAction(req.user.id, 'envio_direto', 'sucesso', {
-      recipients: recipients.length,
+      recipients_count: recipients.length,
+      recipients_list: recipients.join(', '),
       subject,
       has_html: !!html,
       has_text: !!text,
-      has_attachments: !!attachments
+      has_attachments: !!attachments,
+      template_vars_used: !!template_vars,
+      sent_at: new Date().toISOString()
     }, req);
 
     res.json({ 
@@ -183,11 +372,14 @@ app.post('/api/email/send', authMiddleware, async (req, res) => {
   } catch (error) {
     console.error('Erro no envio direto:', error);
     
-    // Log de erro
+    // Log de erro com detalhes completos
     await logAction(req.user.id, 'envio_direto', 'erro', {
-      error: error.message,
-      code: error.code || 'UNKNOWN',
-      recipients: Array.isArray(to) ? to.length : 1
+      error_message: error.message,
+      error_code: error.code || 'UNKNOWN',
+      recipients_count: Array.isArray(to) ? to.length : 1,
+      recipients_list: Array.isArray(to) ? to.join(', ') : to,
+      subject: subject || 'N/A',
+      attempted_at: new Date().toISOString()
     }, req);
 
     res.status(500).json({ 
@@ -200,6 +392,9 @@ app.post('/api/email/send', authMiddleware, async (req, res) => {
 
 // Endpoint: Envio de Campanha em Massa
 app.post('/api/campaign/send', authMiddleware, async (req, res) => {
+  console.log('🚀 ENDPOINT /api/campaign/send chamado - VERSÃO ATUALIZADA');
+  console.log('📋 Dados recebidos:', req.body);
+  console.log('👤 Usuário:', req.user?.id);
   const { campaign_id, test_mode = false } = req.body;
   
   try {
@@ -218,18 +413,68 @@ app.post('/api/campaign/send', authMiddleware, async (req, res) => {
       .single();
     
     if (campaignError || !campaign) {
+      console.error('❌ Erro ao buscar campanha:', campaignError);
       await logAction(req.user.id, 'envio_campanha', 'erro', 'Campanha não encontrada', req);
       return res.status(404).json({ error: 'Campanha não encontrada' });
     }
+    
+    console.log('📊 Campanha encontrada:', { 
+      nome: campaign.nome, 
+      status: campaign.status, 
+      tag_filter: campaign.tag_filter,
+      segmentos: campaign.segmentos 
+    });
 
     // Verificar status da campanha
     if (campaign.status === 'enviada') {
       return res.status(400).json({ error: 'Campanha já foi enviada' });
     }
 
-    // Buscar contatos dos segmentos
+    // Buscar contatos baseado no filtro de tags ou segmentos
     let contacts = [];
-    if (campaign.segmentos && campaign.segmentos.length > 0) {
+    
+    if (campaign.tag_filter) {
+      // Novo sistema de tags
+      console.log('Buscando contatos com tag:', campaign.tag_filter);
+      const { data: taggedContacts, error: contactsError } = await supabase
+        .from('contatos')
+        .select('email, nome, id, tags')
+        .eq('user_id', req.user.id);
+      
+      if (contactsError) {
+        console.error('Erro ao buscar contatos:', contactsError);
+        await logAction(req.user.id, 'envio_campanha', 'erro', 'Erro ao buscar contatos', req);
+        return res.status(500).json({ error: 'Erro ao buscar contatos' });
+      }
+      
+      // Filtrar contatos que possuem a tag especificada
+      contacts = (taggedContacts || []).filter(contact => {
+        if (!contact.tags) {
+          console.log(`❌ Contato ${contact.email} não tem tags`);
+          return false;
+        }
+        
+        let contactTags = contact.tags;
+        if (!Array.isArray(contactTags)) {
+          // Se tags não for array, tentar converter
+          if (typeof contactTags === 'string') {
+            contactTags = contactTags.split(',').map(t => t.trim());
+          } else {
+            console.log(`❌ Contato ${contact.email} tem tags em formato inválido:`, typeof contactTags);
+            return false;
+          }
+        }
+        
+        const hasTag = contactTags.includes(campaign.tag_filter);
+        console.log(`🏷️ Contato ${contact.email} tags:`, contactTags, `- Tem tag "${campaign.tag_filter}":`, hasTag);
+        return hasTag;
+      });
+      
+      console.log(`Encontrados ${contacts.length} contatos com tag "${campaign.tag_filter}"`);
+      
+    } else if (campaign.segmentos && campaign.segmentos.length > 0) {
+      // Sistema antigo de segmentos (compatibilidade)
+      console.log('Buscando contatos por segmentos:', campaign.segmentos);
       const { data: segmentContacts, error: contactsError } = await supabase
         .from('contatos')
         .select('email, nome, id')
@@ -237,17 +482,40 @@ app.post('/api/campaign/send', authMiddleware, async (req, res) => {
         .eq('user_id', req.user.id);
       
       if (contactsError) {
+        console.error('Erro ao buscar contatos por segmento:', contactsError);
         await logAction(req.user.id, 'envio_campanha', 'erro', 'Erro ao buscar contatos', req);
         return res.status(500).json({ error: 'Erro ao buscar contatos' });
       }
       
       contacts = segmentContacts || [];
+      console.log(`Encontrados ${contacts.length} contatos por segmentos`);
+      
+    } else {
+      // Se não há filtro específico, buscar todos os contatos do usuário
+      console.log('Nenhum filtro especificado, buscando todos os contatos');
+      const { data: allContacts, error: contactsError } = await supabase
+        .from('contatos')
+        .select('email, nome, id')
+        .eq('user_id', req.user.id);
+      
+      if (contactsError) {
+        console.error('Erro ao buscar todos os contatos:', contactsError);
+        await logAction(req.user.id, 'envio_campanha', 'erro', 'Erro ao buscar contatos', req);
+        return res.status(500).json({ error: 'Erro ao buscar contatos' });
+      }
+      
+      contacts = allContacts || [];
+      console.log(`Encontrados ${contacts.length} contatos (todos)`);
     }
 
     if (contacts.length === 0) {
+      console.log('❌ Nenhum contato encontrado para a campanha');
       await logAction(req.user.id, 'envio_campanha', 'erro', 'Nenhum contato encontrado', req);
       return res.status(400).json({ error: 'Nenhum contato encontrado nos segmentos da campanha' });
     }
+    
+    console.log(`✅ Iniciando envio para ${contacts.length} contatos`);
+    console.log('Contatos encontrados:', contacts.map(c => `${c.nome} <${c.email}>`));
 
     // Verificar limites do SendGrid (1000 recipients máximo)
     const maxRecipientsPerBatch = 1000;
@@ -312,13 +580,17 @@ app.post('/api/campaign/send', authMiddleware, async (req, res) => {
         });
 
         // Enviar batch
+        console.log(`📧 Enviando batch ${batchIndex + 1} com ${batch.length} emails...`);
         await sgMail.send(messages);
         successCount += batch.length;
         
-        console.log(`Batch ${batchIndex + 1}/${contactBatches.length} enviado com sucesso (${batch.length} emails)`);
+        console.log(`✅ Batch ${batchIndex + 1}/${contactBatches.length} enviado com sucesso (${batch.length} emails)`);
         
       } catch (batchError) {
-        console.error(`Erro no batch ${batchIndex + 1}:`, batchError.message);
+        console.error(`❌ Erro no batch ${batchIndex + 1}:`, batchError.message);
+        console.error('📋 Detalhes do erro SendGrid:', JSON.stringify(batchError.response?.body || batchError, null, 2));
+        console.error('🔍 Status code:', batchError.code);
+        console.error('📧 Dados do batch que falhou:', messages.map(m => ({ to: m.to, from: m.from, subject: m.subject })));
         errorCount += batch.length;
         errors.push({
           batch: batchIndex + 1,
@@ -338,10 +610,13 @@ app.post('/api/campaign/send', authMiddleware, async (req, res) => {
       batches_sent: contactBatches.length
     };
 
+    const finalStatus = errorCount === 0 ? (test_mode ? 'teste_enviado' : 'enviada') : 'erro_parcial';
+    console.log(`🏁 Finalizando campanha - Status: ${finalStatus}, Sucessos: ${successCount}, Erros: ${errorCount}`);
+    
     await supabase
       .from('campanhas')
       .update({ 
-        status: errorCount === 0 ? (test_mode ? 'teste_enviado' : 'enviada') : 'erro_parcial',
+        status: finalStatus,
         estatisticas: statistics,
         updated_at: new Date().toISOString()
       })
@@ -1497,7 +1772,1295 @@ app.get('/api/stats/performance', authMiddleware, async (req, res) => {
   }
 });
 
-// Endpoints para testar as tabelas
+// ========== ENDPOINTS DE LOGS ==========
+
+// Listar logs de ações do usuário
+app.get('/api/logs', authMiddleware, async (req, res) => {
+  try {
+    const { action, status, limit = 50, offset = 0 } = req.query;
+    
+    let query = supabase
+      .from('logs')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (action) {
+      query = query.eq('action', action);
+    }
+
+    if (status) {
+      query = query.eq('status', status);
+    }
+
+    const { data, error } = await query;
+    
+    if (error) throw error;
+    
+    res.json({ 
+      success: true, 
+      data: data || [], 
+      total: data?.length || 0,
+      pagination: {
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        hasMore: data?.length === parseInt(limit)
+      }
+    });
+  } catch (error) {
+    console.error('Erro ao listar logs:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Obter estatísticas de logs
+app.get('/api/logs/stats', authMiddleware, async (req, res) => {
+  try {
+    const { data: logs, error } = await supabase
+      .from('logs')
+      .select('action, status, created_at')
+      .eq('user_id', req.user.id)
+      .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()); // Últimos 30 dias
+
+    if (error) throw error;
+
+    // Agrupar por ação
+    const actionStats = {};
+    const statusStats = { sucesso: 0, erro: 0 };
+    
+    logs.forEach(log => {
+      actionStats[log.action] = (actionStats[log.action] || 0) + 1;
+      statusStats[log.status] = (statusStats[log.status] || 0) + 1;
+    });
+
+    // Estatísticas por dia (últimos 7 dias)
+    const last7Days = {};
+    const now = new Date();
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - i);
+      const dateStr = date.toISOString().split('T')[0];
+      last7Days[dateStr] = 0;
+    }
+
+    logs.forEach(log => {
+      const dateStr = new Date(log.created_at).toISOString().split('T')[0];
+      if (last7Days.hasOwnProperty(dateStr)) {
+        last7Days[dateStr]++;
+      }
+    });
+
+    res.json({
+      success: true,
+      stats: {
+        total_logs: logs.length,
+        by_action: actionStats,
+        by_status: statusStats,
+        daily_activity: last7Days
+      }
+    });
+  } catch (error) {
+    console.error('Erro ao obter estatísticas de logs:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ========== ENDPOINTS DE TAGS ==========
+
+// Listar tags
+app.get('/api/tags', authMiddleware, async (req, res) => {
+  try {
+    const authenticatedSupabase = getAuthenticatedSupabase(req.accessToken);
+    const { data, error } = await authenticatedSupabase
+      .from('tags')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    
+    res.json({ success: true, data: data || [] });
+  } catch (error) {
+    console.error('Erro ao listar tags:', error);
+    res.status(500).json({ error: 'Erro ao carregar tags: ' + error.message });
+  }
+});
+
+// Criar tag
+app.post('/api/tags', authMiddleware, async (req, res) => {
+  const { name, color, icon, description } = req.body;
+  
+  try {
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Nome da tag é obrigatório' });
+    }
+
+    const authenticatedSupabase = getAuthenticatedSupabase(req.accessToken);
+
+    // Verificar se já existe uma tag com este nome para este usuário
+    const { data: existing, error: existingError } = await authenticatedSupabase
+      .from('tags')
+      .select('id')
+      .eq('name', name.trim())
+      .eq('user_id', req.user.id)
+      .single();
+
+    if (existing) {
+      return res.status(400).json({ error: 'Já existe uma tag com este nome' });
+    }
+
+    const { data, error } = await authenticatedSupabase
+      .from('tags')
+      .insert({
+        name: name.trim(),
+        color: color || '#7c3aed',
+        icon: icon || '🏷️',
+        description: description || null,
+        user_id: req.user.id
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    await logAction(req.user.id, 'criar_tag', 'sucesso', {
+      tag_id: data.id,
+      name: data.name
+    }, req);
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Erro ao criar tag:', error);
+    await logAction(req.user.id, 'criar_tag', 'erro', error.message, req);
+    res.status(500).json({ error: 'Erro ao criar tag: ' + error.message });
+  }
+});
+
+// Atualizar tag
+app.put('/api/tags/:id', authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { name, color, icon, description } = req.body;
+  
+  try {
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Nome da tag é obrigatório' });
+    }
+
+    const authenticatedSupabase = getAuthenticatedSupabase(req.accessToken);
+
+    // Verificar se já existe outra tag com este nome para este usuário
+    const { data: existing, error: existingError } = await authenticatedSupabase
+      .from('tags')
+      .select('id')
+      .eq('name', name.trim())
+      .eq('user_id', req.user.id)
+      .neq('id', id)
+      .single();
+
+    if (existing) {
+      return res.status(400).json({ error: 'Já existe uma tag com este nome' });
+    }
+
+    const { data, error } = await authenticatedSupabase
+      .from('tags')
+      .update({
+        name: name.trim(),
+        color: color || '#7c3aed',
+        icon: icon || '🏷️',
+        description: description || null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .eq('user_id', req.user.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Tag não encontrada' });
+
+    await logAction(req.user.id, 'atualizar_tag', 'sucesso', {
+      tag_id: id,
+      name: data.name
+    }, req);
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Erro ao atualizar tag:', error);
+    await logAction(req.user.id, 'atualizar_tag', 'erro', error.message, req);
+    res.status(500).json({ error: 'Erro ao atualizar tag: ' + error.message });
+  }
+});
+
+// Deletar tag
+app.delete('/api/tags/:id', authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    // Verificar se a tag existe
+    const { data: tag, error: fetchError } = await supabase
+      .from('tags')
+      .select('name')
+      .eq('id', id)
+      .eq('user_id', req.user.id)
+      .single();
+
+    if (fetchError || !tag) {
+      return res.status(404).json({ error: 'Tag não encontrada' });
+    }
+
+    // Remover a tag dos contatos que a possuem
+    const { data: contacts, error: contactsError } = await supabase
+      .from('contatos')
+      .select('id, tags')
+      .eq('user_id', req.user.id);
+
+    if (!contactsError && contacts) {
+      for (const contact of contacts) {
+        if (contact.tags && Array.isArray(contact.tags)) {
+          const updatedTags = contact.tags.filter(tagId => tagId !== id && tagId !== tag.name);
+          if (updatedTags.length !== contact.tags.length) {
+            await supabase
+              .from('contatos')
+              .update({ tags: updatedTags })
+              .eq('id', contact.id);
+          }
+        }
+      }
+    }
+
+    // Deletar a tag
+    const { error: deleteError } = await supabase
+      .from('tags')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', req.user.id);
+
+    if (deleteError) throw deleteError;
+
+    await logAction(req.user.id, 'deletar_tag', 'sucesso', {
+      tag_id: id,
+      name: tag.name
+    }, req);
+
+    res.json({ success: true, message: 'Tag excluída com sucesso' });
+  } catch (error) {
+    console.error('Erro ao deletar tag:', error);
+    await logAction(req.user.id, 'deletar_tag', 'erro', error.message, req);
+    res.status(500).json({ error: 'Erro ao excluir tag: ' + error.message });
+  }
+});
+
+// Aplicar tag em massa aos contatos
+app.post('/api/contacts/bulk-tag', authMiddleware, async (req, res) => {
+  const { contact_ids, tag_id } = req.body;
+  
+  try {
+    if (!contact_ids || !Array.isArray(contact_ids) || contact_ids.length === 0) {
+      return res.status(400).json({ error: 'Lista de contatos é obrigatória' });
+    }
+
+    if (!tag_id) {
+      return res.status(400).json({ error: 'ID da tag é obrigatório' });
+    }
+
+    // Verificar se a tag existe
+    const { data: tag, error: tagError } = await supabase
+      .from('tags')
+      .select('id, name')
+      .eq('id', tag_id)
+      .eq('user_id', req.user.id)
+      .single();
+
+    if (tagError || !tag) {
+      return res.status(404).json({ error: 'Tag não encontrada' });
+    }
+
+    // Buscar contatos selecionados
+    const { data: contacts, error: contactsError } = await supabase
+      .from('contatos')
+      .select('id, tags, email')
+      .in('id', contact_ids)
+      .eq('user_id', req.user.id);
+
+    if (contactsError) throw contactsError;
+
+    if (!contacts || contacts.length === 0) {
+      return res.status(404).json({ error: 'Nenhum contato encontrado' });
+    }
+
+    let updatedCount = 0;
+    const errors = [];
+
+    // Atualizar cada contato
+    for (const contact of contacts) {
+      try {
+        let currentTags = contact.tags || [];
+        
+        // Garantir que tags seja um array
+        if (!Array.isArray(currentTags)) {
+          currentTags = [];
+        }
+
+        // Adicionar a tag se ela não estiver presente (evitar duplicatas)
+        if (!currentTags.includes(tag_id) && !currentTags.includes(tag.name)) {
+          currentTags.push(tag.name);
+
+          const { error: updateError } = await supabase
+            .from('contatos')
+            .update({ 
+              tags: currentTags,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', contact.id);
+
+          if (updateError) {
+            errors.push({ contact_id: contact.id, error: updateError.message });
+          } else {
+            updatedCount++;
+          }
+        } else {
+          // Tag já existe no contato
+          updatedCount++;
+        }
+      } catch (contactError) {
+        errors.push({ contact_id: contact.id, error: contactError.message });
+      }
+    }
+
+    await logAction(req.user.id, 'bulk_tag_contatos', 'sucesso', {
+      tag_id: tag_id,
+      tag_name: tag.name,
+      contacts_updated: updatedCount,
+      total_contacts: contact_ids.length,
+      errors: errors.length
+    }, req);
+
+    res.json({
+      success: true,
+      message: `Tag "${tag.name}" aplicada com sucesso`,
+      results: {
+        total_requested: contact_ids.length,
+        updated: updatedCount,
+        errors: errors.length
+      },
+      errors: errors.length > 0 ? errors : undefined
+    });
+
+  } catch (error) {
+    console.error('Erro ao aplicar tags em massa:', error);
+    await logAction(req.user.id, 'bulk_tag_contatos', 'erro', error.message, req);
+    res.status(500).json({ error: 'Erro ao aplicar tags em massa: ' + error.message });
+  }
+});
+
+// Remover tag de um contato específico
+app.post('/api/contacts/:id/remove-tag', authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { tag_name } = req.body;
+  
+  console.log(`[DEBUG] Removendo tag "${tag_name}" do contato ${id} para usuário ${req.user.id}`);
+  
+  try {
+    if (!tag_name) {
+      console.log('[DEBUG] Erro: Nome da tag não fornecido');
+      return res.status(400).json({ error: 'Nome da tag é obrigatório' });
+    }
+
+    // Buscar contato
+    const { data: contact, error: contactError } = await supabase
+      .from('contatos')
+      .select('id, tags, email, nome')
+      .eq('id', id)
+      .eq('user_id', req.user.id)
+      .single();
+
+    if (contactError || !contact) {
+      return res.status(404).json({ error: 'Contato não encontrado' });
+    }
+
+    let currentTags = contact.tags || [];
+    
+    // Garantir que tags seja um array
+    if (!Array.isArray(currentTags)) {
+      currentTags = typeof currentTags === 'string' ? currentTags.split(',').map(t => t.trim()) : [];
+    }
+
+    // Remover a tag se ela estiver presente
+    const initialLength = currentTags.length;
+    currentTags = currentTags.filter(tag => tag !== tag_name);
+
+    if (currentTags.length === initialLength) {
+      return res.status(400).json({ error: 'Tag não encontrada no contato' });
+    }
+
+    // Atualizar contato
+    const { error: updateError } = await supabase
+      .from('contatos')
+      .update({ 
+        tags: currentTags,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', contact.id);
+
+    if (updateError) throw updateError;
+
+    // Log da ação (não crítico)
+    try {
+      await logAction(req.user.id, 'remover_tag_contato', 'sucesso', {
+        contact_id: id,
+        contact_email: contact.email,
+        tag_name: tag_name,
+        tags_remaining: currentTags.length
+      }, req);
+    } catch (logError) {
+      console.error('Erro no log (não crítico):', logError.message);
+    }
+
+    res.json({
+      success: true,
+      message: `Tag "${tag_name}" removida do contato com sucesso`,
+      contact: {
+        id: contact.id,
+        email: contact.email,
+        nome: contact.nome,
+        tags: currentTags
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro ao remover tag do contato:', error);
+    // Log de erro (não crítico)
+    try {
+      await logAction(req.user.id, 'remover_tag_contato', 'erro', error.message, req);
+    } catch (logError) {
+      console.error('Erro no log de erro (não crítico):', logError.message);
+    }
+    res.status(500).json({ error: 'Erro ao remover tag do contato: ' + error.message });
+  }
+});
+
+// Remover tag de múltiplos contatos (remoção em massa)
+app.post('/api/contacts/bulk-remove-tag', authMiddleware, async (req, res) => {
+  const { contact_ids, tag_name } = req.body;
+  
+  console.log(`[DEBUG] Removendo tag "${tag_name}" de ${contact_ids?.length || 0} contatos para usuário ${req.user.id}`);
+  
+  try {
+    if (!contact_ids || !Array.isArray(contact_ids) || contact_ids.length === 0) {
+      console.log('[DEBUG] Erro: Lista de contatos inválida');
+      return res.status(400).json({ error: 'Lista de contatos é obrigatória' });
+    }
+
+    if (!tag_name) {
+      console.log('[DEBUG] Erro: Nome da tag não fornecido');
+      return res.status(400).json({ error: 'Nome da tag é obrigatório' });
+    }
+
+    // Buscar contatos selecionados
+    const { data: contacts, error: contactsError } = await supabase
+      .from('contatos')
+      .select('id, tags, email, nome')
+      .in('id', contact_ids)
+      .eq('user_id', req.user.id);
+
+    if (contactsError) throw contactsError;
+
+    if (!contacts || contacts.length === 0) {
+      return res.status(404).json({ error: 'Nenhum contato encontrado' });
+    }
+
+    let updatedCount = 0;
+    let notFoundCount = 0;
+    const errors = [];
+
+    // Processar cada contato
+    for (const contact of contacts) {
+      try {
+        let currentTags = contact.tags || [];
+        
+        // Garantir que tags seja um array
+        if (!Array.isArray(currentTags)) {
+          currentTags = typeof currentTags === 'string' ? currentTags.split(',').map(t => t.trim()) : [];
+        }
+
+        const initialLength = currentTags.length;
+        currentTags = currentTags.filter(tag => tag !== tag_name);
+
+        if (currentTags.length < initialLength) {
+          // Tag foi removida, atualizar contato
+          const { error: updateError } = await supabase
+            .from('contatos')
+            .update({ 
+              tags: currentTags,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', contact.id);
+
+          if (updateError) {
+            errors.push({ contact_id: contact.id, error: updateError.message });
+          } else {
+            updatedCount++;
+          }
+        } else {
+          // Tag não foi encontrada no contato
+          notFoundCount++;
+        }
+      } catch (contactError) {
+        errors.push({ contact_id: contact.id, error: contactError.message });
+      }
+    }
+
+    // Log da ação (não crítico)
+    try {
+      await logAction(req.user.id, 'bulk_remove_tag_contatos', 'sucesso', {
+        tag_name: tag_name,
+        contacts_updated: updatedCount,
+        contacts_not_found: notFoundCount,
+        total_contacts: contact_ids.length,
+        errors: errors.length
+      }, req);
+    } catch (logError) {
+      console.error('Erro no log (não crítico):', logError.message);
+    }
+
+    res.json({
+      success: true,
+      message: `Tag "${tag_name}" removida com sucesso`,
+      results: {
+        total_requested: contact_ids.length,
+        updated: updatedCount,
+        tag_not_found: notFoundCount,
+        errors: errors.length
+      },
+      errors: errors.length > 0 ? errors : undefined
+    });
+
+  } catch (error) {
+    console.error('Erro ao remover tags em massa:', error);
+    // Log de erro (não crítico)
+    try {
+      await logAction(req.user.id, 'bulk_remove_tag_contatos', 'erro', error.message, req);
+    } catch (logError) {
+      console.error('Erro no log de erro (não crítico):', logError.message);
+    }
+    res.status(500).json({ error: 'Erro ao remover tags em massa: ' + error.message });
+  }
+});
+
+// ========== SISTEMA DE VARIÁVEIS CUSTOMIZADAS ==========
+
+// Listar variáveis customizadas + universais
+app.get('/api/variables', authMiddleware, async (req, res) => {
+  try {
+    // Primeiro tentar usar a view otimizada, se não existir usar tabela simples
+    let { data, error } = await supabase
+      .from('variables_with_stats')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .order('created_at', { ascending: false });
+
+    // Se a view não existir, usar a tabela básica
+    if (error && error.message.includes('does not exist')) {
+      console.log('View variables_with_stats não existe, usando tabela básica');
+      const { data: basicData, error: basicError } = await supabase
+        .from('custom_variables')
+        .select('*')
+        .eq('user_id', req.user.id)
+        .order('created_at', { ascending: false });
+      
+      if (basicError) throw basicError;
+      
+      // Adicionar campos de stats vazios para compatibilidade
+      data = basicData?.map(variable => ({
+        ...variable,
+        datasets_count: 0,
+        total_values: 0,
+        last_used: null
+      })) || [];
+    } else if (error) {
+      throw error;
+    }
+
+    // Adicionar variáveis universais no início da lista
+    const variaveisUniversais = [
+      {
+        id: 'universal_nome',
+        user_id: req.user.id,
+        name: '{{nome}}',
+        display_name: 'Nome (primeiro nome)',
+        description: 'Primeiro nome do contato (extraído automaticamente do campo nome completo)',
+        data_type: 'text',
+        default_value: '[Nome]',
+        is_required: false,
+        is_universal: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        datasets_count: 0,
+        total_values: 'Baseado em contatos',
+        last_used: null
+      },
+      {
+        id: 'universal_nome_completo',
+        user_id: req.user.id,
+        name: '{{nome_completo}}',
+        display_name: 'Nome Completo',
+        description: 'Nome completo do contato (puxado diretamente da lista de contatos)',
+        data_type: 'text',
+        default_value: '[Nome Completo]',
+        is_required: false,
+        is_universal: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        datasets_count: 0,
+        total_values: 'Baseado em contatos',
+        last_used: null
+      }
+    ];
+
+    // Combinar variáveis universais com customizadas
+    const todasVariaveis = [...variaveisUniversais, ...(data || [])];
+
+    res.json({ success: true, data: todasVariaveis });
+  } catch (error) {
+    console.error('Erro ao listar variáveis:', error);
+    res.status(500).json({ error: 'Erro ao listar variáveis: ' + error.message });
+  }
+});
+
+// Testar variáveis universais com um contato específico
+app.post('/api/variables/test-universal', authMiddleware, async (req, res) => {
+  const { template, contact_id } = req.body;
+  
+  try {
+    if (!template) {
+      return res.status(400).json({ error: 'Template é obrigatório' });
+    }
+
+    // Processar o template com variáveis universais
+    const resultado = await processarVariaveisUniversais(template, req.user.id, contact_id);
+
+    res.json({ 
+      success: true, 
+      original: template,
+      processed: resultado,
+      contact_id: contact_id || null
+    });
+  } catch (error) {
+    console.error('Erro ao testar variáveis universais:', error);
+    res.status(500).json({ error: 'Erro ao processar variáveis: ' + error.message });
+  }
+});
+
+// Criar nova variável customizada
+app.post('/api/variables', authMiddleware, async (req, res) => {
+  const { name, display_name, description, data_type, default_value, is_required } = req.body;
+  
+  try {
+    if (!name || !display_name) {
+      return res.status(400).json({ error: 'Nome e nome de exibição são obrigatórios' });
+    }
+
+    // Garantir que o nome está no formato correto {{variavel}}
+    let formattedName = name.trim();
+    if (!formattedName.startsWith('{{') || !formattedName.endsWith('}}')) {
+      formattedName = `{{${formattedName.replace(/[{}]/g, '')}}}`;
+    }
+
+    const { data, error } = await supabase
+      .from('custom_variables')
+      .insert({
+        user_id: req.user.id,
+        name: formattedName,
+        display_name: display_name.trim(),
+        description: description?.trim() || null,
+        data_type: data_type || 'text',
+        default_value: default_value?.trim() || null,
+        is_required: is_required || false
+      })
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === '23505') { // Unique constraint violation
+        return res.status(400).json({ error: 'Já existe uma variável com este nome' });
+      }
+      throw error;
+    }
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Erro ao criar variável:', error);
+    res.status(500).json({ error: 'Erro ao criar variável: ' + error.message });
+  }
+});
+
+// Atualizar variável customizada
+app.put('/api/variables/:id', authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { display_name, description, data_type, default_value, is_required } = req.body;
+  
+  try {
+    if (!display_name) {
+      return res.status(400).json({ error: 'Nome de exibição é obrigatório' });
+    }
+
+    const { data, error } = await supabase
+      .from('custom_variables')
+      .update({
+        display_name: display_name.trim(),
+        description: description?.trim() || null,
+        data_type: data_type || 'text',
+        default_value: default_value?.trim() || null,
+        is_required: is_required || false
+      })
+      .eq('id', id)
+      .eq('user_id', req.user.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Variável não encontrada' });
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Erro ao atualizar variável:', error);
+    res.status(500).json({ error: 'Erro ao atualizar variável: ' + error.message });
+  }
+});
+
+// Deletar variável customizada
+app.delete('/api/variables/:id', authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    // Verificar se a variável tem dados associados
+    const { data: valueCount } = await supabase
+      .from('variable_values')
+      .select('id')
+      .eq('variable_id', id);
+
+    if (valueCount && valueCount.length > 0) {
+      return res.status(400).json({ 
+        error: 'Não é possível deletar variável que possui dados. Delete os datasets primeiro.' 
+      });
+    }
+
+    const { data, error } = await supabase
+      .from('custom_variables')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', req.user.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Variável não encontrada' });
+
+    res.json({ success: true, message: 'Variável deletada com sucesso' });
+  } catch (error) {
+    console.error('Erro ao deletar variável:', error);
+    res.status(500).json({ error: 'Erro ao deletar variável: ' + error.message });
+  }
+});
+
+// Download CSV de exemplo
+app.get('/api/datasets/exemplo.csv', (req, res) => {
+  const csvContent = `email,nome,empresa,cargo,cidade,telefone,produto_interesse,data_cadastro,valor_contrato,status_cliente
+joao.silva@techcorp.com,João Silva,TechCorp Ltda,Gerente de TI,São Paulo,(11) 99999-1234,Software de Gestão,2024-01-15,R$ 15000,Ativo
+maria.santos@startupx.com,Maria Santos,StartupX,CEO,Rio de Janeiro,(21) 98888-5678,Consultoria Digital,2024-02-20,R$ 25000,Prospect
+carlos.oliveira@inovacorp.com,Carlos Oliveira,InovaCorp,Diretor Comercial,Belo Horizonte,(31) 97777-9012,Automação,2024-03-10,R$ 30000,Negociação
+ana.costa@digitalplus.com,Ana Costa,DigitalPlus,Coordenadora de Marketing,Brasília,(61) 96666-3456,Marketing Digital,2024-01-30,R$ 8000,Ativo
+pedro.almeida@techsol.com,Pedro Almeida,TechSolutions,CTO,Curitiba,(41) 95555-7890,Desenvolvimento,2024-02-14,R$ 45000,Fechado
+lucia.ferreira@comercialx.com,Lúcia Ferreira,ComercialX,Gerente de Vendas,Fortaleza,(85) 94444-2345,CRM,2024-03-05,R$ 12000,Prospect
+roberto.lima@industria.com,Roberto Lima,Indústria ABC,Diretor de Operações,Porto Alegre,(51) 93333-6789,ERP,2024-01-20,R$ 35000,Ativo
+fernanda.rocha@servicos.com,Fernanda Rocha,Serviços Mais,Supervisora,Recife,(81) 92222-0123,Automação,2024-02-28,R$ 18000,Negociação`;
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="exemplo.csv"');
+  res.setHeader('Cache-Control', 'no-cache');
+  
+  // Adicionar BOM para UTF-8 (melhora compatibilidade com Excel)
+  res.write('\uFEFF');
+  res.end(csvContent);
+});
+
+// Listar datasets
+app.get('/api/datasets', authMiddleware, async (req, res) => {
+  try {
+    // Primeiro tentar usar a view otimizada, se não existir usar tabela simples
+    let { data, error } = await supabase
+      .from('datasets_with_stats')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .order('created_at', { ascending: false });
+
+    // Se a view não existir, usar a tabela básica
+    if (error && error.message.includes('does not exist')) {
+      console.log('View datasets_with_stats não existe, usando tabela básica');
+      const { data: basicData, error: basicError } = await supabase
+        .from('variable_datasets')
+        .select('*')
+        .eq('user_id', req.user.id)
+        .order('created_at', { ascending: false });
+      
+      if (basicError) throw basicError;
+      
+      // Adicionar campos de stats vazios para compatibilidade
+      data = basicData?.map(dataset => ({
+        ...dataset,
+        variables_count: 0,
+        total_values: 0,
+        usage_count: 0
+      })) || [];
+    } else if (error) {
+      throw error;
+    }
+
+    res.json({ success: true, data: data || [] });
+  } catch (error) {
+    console.error('Erro ao listar datasets:', error);
+    res.status(500).json({ error: 'Erro ao listar datasets: ' + error.message });
+  }
+});
+
+// Upload e processamento de CSV
+app.post('/api/datasets/upload', authMiddleware, upload.single('csv'), async (req, res) => {
+  const { name, description, variable_mapping } = req.body;
+  
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Arquivo CSV é obrigatório' });
+    }
+
+    if (!name) {
+      return res.status(400).json({ error: 'Nome do dataset é obrigatório' });
+    }
+
+    const filePath = req.file.path;
+    const headers = [];
+    const rows = [];
+    
+    // Ler CSV e extrair headers e dados
+    await new Promise((resolve, reject) => {
+      fs.createReadStream(filePath)
+        .pipe(csv())
+        .on('headers', (headerList) => {
+          headers.push(...headerList);
+        })
+        .on('data', (row) => {
+          rows.push(row);
+        })
+        .on('end', resolve)
+        .on('error', reject);
+    });
+
+    if (rows.length === 0) {
+      fs.unlinkSync(filePath); // Limpar arquivo
+      return res.status(400).json({ error: 'CSV não contém dados válidos' });
+    }
+
+    // Criar dataset
+    const { data: dataset, error: datasetError } = await supabase
+      .from('variable_datasets')
+      .insert({
+        user_id: req.user.id,
+        name: name.trim(),
+        description: description?.trim() || null,
+        file_name: req.file.originalname,
+        total_rows: rows.length,
+        csv_headers: headers,
+        mapping_config: variable_mapping ? JSON.parse(variable_mapping) : {}
+      })
+      .select()
+      .single();
+
+    if (datasetError) throw datasetError;
+
+    // Processar mapeamento de variáveis se fornecido
+    if (variable_mapping) {
+      const mapping = JSON.parse(variable_mapping);
+      const variableValues = [];
+
+      for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+        const row = rows[rowIndex];
+        
+        for (const [variableId, csvColumn] of Object.entries(mapping)) {
+          if (csvColumn && row[csvColumn] !== undefined) {
+            variableValues.push({
+              dataset_id: dataset.id,
+              variable_id: variableId,
+              row_index: rowIndex,
+              value: row[csvColumn],
+              row_identifier: row[Object.keys(row)[0]] || null // Usar primeira coluna como identificador
+            });
+          }
+        }
+      }
+
+      // Inserir valores em lotes
+      if (variableValues.length > 0) {
+        const batchSize = 1000;
+        for (let i = 0; i < variableValues.length; i += batchSize) {
+          const batch = variableValues.slice(i, i + batchSize);
+          const { error: valuesError } = await supabase
+            .from('variable_values')
+            .insert(batch);
+
+          if (valuesError) throw valuesError;
+        }
+      }
+    }
+
+    // Limpar arquivo temporário
+    fs.unlinkSync(filePath);
+
+    res.json({ 
+      success: true, 
+      data: dataset,
+      stats: {
+        headers_found: headers.length,
+        rows_processed: rows.length,
+        values_inserted: variable_mapping ? Object.keys(JSON.parse(variable_mapping)).length * rows.length : 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro ao processar CSV:', error);
+    
+    // Limpar arquivo em caso de erro
+    if (req.file?.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    
+    res.status(500).json({ error: 'Erro ao processar CSV: ' + error.message });
+  }
+});
+
+// Preview de CSV antes do upload
+app.post('/api/datasets/preview', authMiddleware, upload.single('csv'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Arquivo CSV é obrigatório' });
+    }
+
+    const filePath = req.file.path;
+    const headers = [];
+    const sampleRows = [];
+    let rowCount = 0;
+    
+    // Ler apenas as primeiras 5 linhas para preview
+    await new Promise((resolve, reject) => {
+      fs.createReadStream(filePath)
+        .pipe(csv())
+        .on('headers', (headerList) => {
+          headers.push(...headerList);
+        })
+        .on('data', (row) => {
+          if (rowCount < 5) {
+            sampleRows.push(row);
+          }
+          rowCount++;
+        })
+        .on('end', resolve)
+        .on('error', reject);
+    });
+
+    // Buscar variáveis disponíveis para mapeamento
+    const { data: variables, error: varsError } = await supabase
+      .from('custom_variables')
+      .select('id, name, display_name, data_type')
+      .eq('user_id', req.user.id)
+      .order('display_name');
+
+    if (varsError) throw varsError;
+
+    // Limpar arquivo temporário
+    fs.unlinkSync(filePath);
+
+    res.json({
+      success: true,
+      preview: {
+        headers,
+        sample_rows: sampleRows,
+        total_rows: rowCount,
+        available_variables: variables || []
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro ao fazer preview do CSV:', error);
+    
+    // Limpar arquivo em caso de erro
+    if (req.file?.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    
+    res.status(500).json({ error: 'Erro ao fazer preview do CSV: ' + error.message });
+  }
+});
+
+// Deletar dataset
+app.delete('/api/datasets/:id', authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const { data, error } = await supabase
+      .from('variable_datasets')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', req.user.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Dataset não encontrado' });
+
+    res.json({ success: true, message: 'Dataset deletado com sucesso' });
+  } catch (error) {
+    console.error('Erro ao deletar dataset:', error);
+    res.status(500).json({ error: 'Erro ao deletar dataset: ' + error.message });
+  }
+});
+
+// Obter valores de um dataset específico
+app.get('/api/datasets/:id/values', authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { page = 1, limit = 50 } = req.query;
+  
+  try {
+    // Verificar se o dataset pertence ao usuário
+    const { data: dataset, error: datasetError } = await supabase
+      .from('variable_datasets')
+      .select('*')
+      .eq('id', id)
+      .eq('user_id', req.user.id)
+      .single();
+
+    if (datasetError) throw datasetError;
+    if (!dataset) return res.status(404).json({ error: 'Dataset não encontrado' });
+
+    // Buscar valores com paginação
+    const offset = (page - 1) * limit;
+    
+    const { data: values, error: valuesError } = await supabase
+      .from('variable_values')
+      .select(`
+        *,
+        custom_variables!inner(name, display_name, data_type)
+      `)
+      .eq('dataset_id', id)
+      .range(offset, offset + limit - 1)
+      .order('row_index');
+
+    if (valuesError) throw valuesError;
+
+    // Organizar dados por linha
+    const organizedData = {};
+    values.forEach(value => {
+      if (!organizedData[value.row_index]) {
+        organizedData[value.row_index] = {
+          row_index: value.row_index,
+          row_identifier: value.row_identifier,
+          variables: {}
+        };
+      }
+      organizedData[value.row_index].variables[value.custom_variables.name] = {
+        value: value.value,
+        display_name: value.custom_variables.display_name,
+        data_type: value.custom_variables.data_type
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        dataset,
+        rows: Object.values(organizedData),
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total_rows: dataset.total_rows
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro ao buscar valores do dataset:', error);
+    res.status(500).json({ error: 'Erro ao buscar valores do dataset: ' + error.message });
+  }
+});
+
+// ========== ENDPOINTS DE CONTATOS ==========
+
+// Listar contatos
+app.get('/api/contacts', authMiddleware, async (req, res) => {
+  try {
+    console.log('Listando contatos para usuário:', req.user.id);
+    const { data, error } = await supabase
+      .from('contatos')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error('Erro do Supabase ao listar contatos:', error);
+      throw error;
+    }
+    
+    console.log(`Encontrados ${data.length} contatos para o usuário`);
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao listar contatos:', error);
+    res.status(500).json({ error: 'Erro ao carregar contatos: ' + error.message });
+  }
+});
+
+// Criar contato
+app.post('/api/contacts', authMiddleware, async (req, res) => {
+  const { email, nome, telefone, empresa, tags } = req.body;
+  
+  try {
+    if (!email || !email.trim()) {
+      return res.status(400).json({ error: 'Email é obrigatório' });
+    }
+
+    // Validar formato de email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Email inválido' });
+    }
+
+    // Verificar se email já existe para este usuário
+    const { data: existing, error: existingError } = await supabase
+      .from('contatos')
+      .select('id')
+      .eq('email', email.toLowerCase())
+      .eq('user_id', req.user.id)
+      .single();
+
+    if (existing) {
+      return res.status(400).json({ error: 'Email já existe na sua lista de contatos' });
+    }
+
+    const { data, error } = await supabase
+      .from('contatos')
+      .insert({
+        email: email.toLowerCase(),
+        nome: nome || null,
+        telefone: telefone || null,
+        empresa: empresa || null,
+        tags: tags || [],
+        user_id: req.user.id
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    await logAction(req.user.id, 'criar_contato', 'sucesso', {
+      contato_id: data.id,
+      email: data.email
+    }, req);
+
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao criar contato:', error);
+    await logAction(req.user.id, 'criar_contato', 'erro', error.message, req);
+    res.status(500).json({ error: 'Erro ao criar contato' });
+  }
+});
+
+// Atualizar contato
+app.put('/api/contacts/:id', authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { email, nome, telefone, empresa, tags } = req.body;
+  
+  try {
+    if (!email || !email.trim()) {
+      return res.status(400).json({ error: 'Email é obrigatório' });
+    }
+
+    // Validar formato de email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Email inválido' });
+    }
+
+    // Verificar se email já existe para outro contato deste usuário
+    const { data: existing, error: existingError } = await supabase
+      .from('contatos')
+      .select('id')
+      .eq('email', email.toLowerCase())
+      .eq('user_id', req.user.id)
+      .neq('id', id)
+      .single();
+
+    if (existing) {
+      return res.status(400).json({ error: 'Email já existe em outro contato' });
+    }
+
+    const { data, error } = await supabase
+      .from('contatos')
+      .update({
+        email: email.toLowerCase(),
+        nome: nome || null,
+        telefone: telefone || null,
+        empresa: empresa || null,
+        tags: tags || [],
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .eq('user_id', req.user.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Contato não encontrado' });
+
+    await logAction(req.user.id, 'atualizar_contato', 'sucesso', {
+      contato_id: id,
+      email: data.email
+    }, req);
+
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao atualizar contato:', error);
+    await logAction(req.user.id, 'atualizar_contato', 'erro', error.message, req);
+    res.status(500).json({ error: 'Erro ao atualizar contato' });
+  }
+});
+
+// Deletar contato
+app.delete('/api/contacts/:id', authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const { data, error } = await supabase
+      .from('contatos')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', req.user.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Contato não encontrado' });
+
+    await logAction(req.user.id, 'deletar_contato', 'sucesso', {
+      contato_id: id,
+      email: data.email
+    }, req);
+
+    res.json({ success: true, message: 'Contato excluído com sucesso' });
+  } catch (error) {
+    console.error('Erro ao deletar contato:', error);
+    await logAction(req.user.id, 'deletar_contato', 'erro', error.message, req);
+    res.status(500).json({ error: 'Erro ao excluir contato' });
+  }
+});
+
+// Endpoints para testar as tabelas (mantido para compatibilidade)
 app.get('/api/contatos', authMiddleware, async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -1537,6 +3100,234 @@ app.get('/api/campanhas', authMiddleware, async (req, res) => {
     res.json({ success: true, data });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Endpoint para compatibilidade com o frontend (campaigns)
+app.get('/api/campaigns', authMiddleware, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('campanhas')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao listar campanhas:', error);
+    res.status(500).json({ error: 'Erro ao carregar campanhas: ' + error.message });
+  }
+});
+
+// Create campaign
+app.post('/api/campaigns', authMiddleware, async (req, res) => {
+  console.log('🚀 ENDPOINT /api/campaigns chamado - VERSÃO ATUALIZADA');
+  try {
+    const { name, subject, template_id, tag_filter, segment_filter, scheduled_at } = req.body;
+
+    if (!name || !subject) {
+      return res.status(400).json({ error: 'Nome e assunto são obrigatórios' });
+    }
+
+    // Fetch template HTML if template_id is provided
+    let template_html = '';
+    console.log('Criando campanha - template_id:', template_id);
+    
+    if (template_id) {
+      console.log('Buscando template com ID:', template_id);
+      const { data: templateData, error: templateError } = await supabase
+        .from('templates')
+        .select('html')
+        .eq('id', template_id)
+        .eq('user_id', req.user.id)
+        .single();
+      
+      if (templateError) {
+        console.error('Erro ao buscar template:', templateError);
+        return res.status(404).json({ error: 'Template não encontrado' });
+      }
+      
+      template_html = templateData.html || '';
+      
+      // Se o template HTML estiver vazio, usar template padrão
+      if (!template_html || template_html.trim() === '') {
+        template_html = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h1>${subject}</h1>
+            <p>Conteúdo da campanha</p>
+          </div>
+        `;
+        console.log('Template estava vazio, usando template padrão');
+      }
+      console.log('Template HTML encontrado, tamanho:', template_html.length);
+    } else {
+      // Default basic template if no template is selected
+      template_html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h1>${subject}</h1>
+          <p>Conteúdo da campanha</p>
+        </div>
+      `;
+      console.log('Usando template padrão, tamanho:', template_html.length);
+    }
+    
+    // Garantir que template_html nunca seja null ou vazio
+    if (!template_html || template_html.trim() === '') {
+      template_html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h1>${subject}</h1>
+          <p>Conteúdo da campanha</p>
+        </div>
+      `;
+      console.log('ATENÇÃO: template_html estava vazio, forçando template padrão');
+    }
+    
+    console.log('template_html final:', template_html ? 'PREENCHIDO' : 'VAZIO');
+    console.log('template_html length:', template_html.length);
+
+    // Support both tag_filter (new) and segment_filter (backward compatibility)
+    const filter = tag_filter || segment_filter;
+
+    const campaignData = {
+      nome: name,
+      assunto: subject,
+      template_id,
+      template_html,
+      segmentos: filter ? [filter] : [],
+      tag_filter: tag_filter || null,
+      remetente: 'avisos@lembretescredilly.com', // Default sender (verified in SendGrid)
+      status: scheduled_at ? 'agendada' : 'rascunho',
+      agendamento: scheduled_at || null,
+      user_id: req.user.id,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    
+    console.log('Dados da campanha a serem inseridos:', {
+      nome: campaignData.nome,
+      template_id: campaignData.template_id,
+      template_html_length: campaignData.template_html ? campaignData.template_html.length : 'NULL'
+    });
+
+    const { data, error } = await supabase
+      .from('campanhas')
+      .insert([campaignData])
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao criar campanha:', error);
+    res.status(500).json({ error: 'Erro ao criar campanha: ' + error.message });
+  }
+});
+
+// Update campaign
+app.put('/api/campaigns/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, subject, template_id, tag_filter, segment_filter, scheduled_at } = req.body;
+
+    // Support both tag_filter (new) and segment_filter (backward compatibility)
+    const filter = tag_filter || segment_filter;
+
+    const updateData = {
+      nome: name,
+      assunto: subject,
+      template_id,
+      segmentos: filter ? [filter] : [],
+      tag_filter: tag_filter || null,
+      status: scheduled_at ? 'agendada' : 'rascunho',
+      agendamento: scheduled_at || null,
+      updated_at: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from('campanhas')
+      .update(updateData)
+      .eq('id', id)
+      .eq('user_id', req.user.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!data) {
+      return res.status(404).json({ error: 'Campanha não encontrada' });
+    }
+
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao atualizar campanha:', error);
+    res.status(500).json({ error: 'Erro ao atualizar campanha: ' + error.message });
+  }
+});
+
+// Delete campaign
+app.delete('/api/campaigns/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Primeiro, verificar se a campanha existe e pertence ao usuário
+    const { data: existingCampaign, error: checkError } = await supabase
+      .from('campanhas')
+      .select('id, nome')
+      .eq('id', id)
+      .eq('user_id', req.user.id)
+      .single();
+
+    if (checkError || !existingCampaign) {
+      return res.status(404).json({ error: 'Campanha não encontrada ou não autorizada' });
+    }
+
+    // Excluir registros dependentes primeiro (para evitar violação de chave estrangeira)
+    console.log(`Iniciando exclusão da campanha "${existingCampaign.nome}" e seus dados relacionados...`);
+
+    // 1. Excluir estatísticas de email relacionadas
+    const { error: statsError } = await supabase
+      .from('email_statistics')
+      .delete()
+      .eq('campaign_id', id);
+    
+    if (statsError) {
+      console.log('Aviso ao excluir estatísticas:', statsError.message);
+    }
+
+    // 2. Excluir agendamentos relacionados
+    const { error: scheduleError } = await supabase
+      .from('schedules')
+      .delete()
+      .eq('campaign_id', id);
+    
+    if (scheduleError) {
+      console.log('Aviso ao excluir agendamentos:', scheduleError.message);
+    }
+
+    // 3. Excluir agendamentos de campanha relacionados
+    const { error: campaignScheduleError } = await supabase
+      .from('campaign_schedules')
+      .delete()
+      .eq('campaign_id', id);
+    
+    if (campaignScheduleError) {
+      console.log('Aviso ao excluir agendamentos de campanha:', campaignScheduleError.message);
+    }
+
+    // 4. Agora excluir a campanha principal
+    const { error: deleteError } = await supabase
+      .from('campanhas')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', req.user.id);
+
+    if (deleteError) throw deleteError;
+
+    console.log(`Campanha "${existingCampaign.nome}" e todos os dados relacionados excluídos com sucesso pelo usuário ${req.user.id}`);
+    res.json({ success: true, message: 'Campanha excluída com sucesso' });
+  } catch (error) {
+    console.error('Erro ao excluir campanha:', error);
+    res.status(500).json({ error: 'Erro ao excluir campanha: ' + error.message });
   }
 });
 

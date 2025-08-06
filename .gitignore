@@ -1,0 +1,13 @@
+.env
+node_modules/
+server.log
+frontend/node_modules
+/coverage
+/uploads
+.DS_Store
+*.log
+# Ignorar arquivos de imagem e outros documentos desnecessários
+*.png
+*.md
+*.sql
+*.html
