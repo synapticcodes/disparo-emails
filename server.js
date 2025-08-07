@@ -278,11 +278,353 @@ app.get('/api/protected', authMiddleware, (req, res) => {
   });
 });
 
+// ========== WEBHOOK E EVENTOS DE EMAIL ==========
+
+const crypto = require('crypto');
+
+// Middleware para validar assinatura do SendGrid (para segurança)
+function verifyWebhookSignature(req, res, next) {
+  // Para desenvolvimento, pode pular a verificação
+  // Em produção, sempre verificar a assinatura
+  const isDevelopment = process.env.NODE_ENV !== 'production';
+  
+  if (isDevelopment) {
+    console.log('⚠️ Modo desenvolvimento: pulando verificação de assinatura do webhook');
+    return next();
+  }
+  
+  const signature = req.get('X-Twilio-Email-Event-Webhook-Signature');
+  const timestamp = req.get('X-Twilio-Email-Event-Webhook-Timestamp');
+  
+  if (!signature || !timestamp) {
+    return res.status(400).json({ error: 'Missing signature or timestamp' });
+  }
+  
+  const payload = JSON.stringify(req.body);
+  const signed_payload = timestamp + payload;
+  const verification_key = process.env.SENDGRID_WEBHOOK_KEY; // Configurar no .env
+  
+  if (!verification_key) {
+    console.warn('⚠️ SENDGRID_WEBHOOK_KEY não configurada - webhook aceito sem verificação');
+    return next();
+  }
+  
+  const expected_signature = crypto
+    .createHmac('sha256', verification_key)
+    .update(signed_payload, 'utf8')
+    .digest('base64');
+  
+  const is_valid = crypto.timingSafeEqual(
+    Buffer.from(signature, 'base64'),
+    Buffer.from(expected_signature, 'base64')
+  );
+  
+  if (!is_valid) {
+    return res.status(401).json({ error: 'Invalid signature' });
+  }
+  
+  next();
+}
+
+// Endpoint para receber eventos do SendGrid via webhook
+app.post('/api/sendgrid-events', verifyWebhookSignature, async (req, res) => {
+  try {
+    console.log('📨 Webhook SendGrid recebido:', new Date().toISOString());
+    const events = req.body;
+    
+    if (!Array.isArray(events)) {
+      console.warn('⚠️ Webhook SendGrid: body não é um array');
+      return res.status(400).json({ error: 'Expected array of events' });
+    }
+    
+    console.log(`📊 Processando ${events.length} evento(s) do SendGrid`);
+    
+    let processedEvents = 0;
+    let duplicateEvents = 0;
+    let errors = 0;
+    
+    for (const event of events) {
+      try {
+        // Log do evento para debug
+        console.log(`🔍 Evento: ${event.event} para ${event.email} | Message ID: ${event.sg_message_id}`);
+        
+        // Extrair informações do evento
+        const {
+          event: eventType,
+          email,
+          timestamp,
+          sg_message_id,
+          sg_event_id,
+          url,
+          useragent,
+          ip,
+          campaign_id, // Este virá como custom_arg se configurado
+          ...additionalData
+        } = event;
+        
+        // Verificar se é um evento que queremos rastrear
+        const trackedEvents = ['delivered', 'open', 'click', 'bounce', 'dropped', 'deferred', 'blocked', 'spam_report', 'unsubscribe'];
+        if (!trackedEvents.includes(eventType)) {
+          console.log(`⏭️ Pulando evento ${eventType} (não rastreado)`);
+          continue;
+        }
+        
+        // Tentar encontrar o user_id baseado no campaign_id se disponível
+        let userId = null;
+        let campaignId = null;
+        
+        if (campaign_id) {
+          const { data: campaign } = await supabase
+            .from('campanhas')
+            .select('user_id, id')
+            .eq('id', campaign_id)
+            .single();
+          
+          if (campaign) {
+            userId = campaign.user_id;
+            campaignId = campaign.id;
+          }
+        }
+        
+        // Se não tem campaign_id, tentar encontrar o usuário pelo email do contato
+        if (!userId && email) {
+          const { data: contact } = await supabase
+            .from('contatos')
+            .select('user_id')
+            .eq('email', email)
+            .limit(1)
+            .single();
+          
+          if (contact) {
+            userId = contact.user_id;
+          }
+        }
+        
+        // Preparar dados do evento
+        const eventData = {
+          contact_email: email,
+          event_type: eventType,
+          campaign_id: campaignId,
+          message_id: sg_message_id,
+          user_id: userId,
+          event_timestamp: new Date(timestamp * 1000).toISOString(),
+          sg_event_id: sg_event_id,
+          url: url || null,
+          user_agent: useragent || null,
+          ip: ip || null,
+          additional_data: additionalData
+        };
+        
+        // Inserir no banco (com prevenção de duplicatas via sg_event_id único)
+        const { data, error } = await supabase
+          .from('email_events')
+          .insert(eventData);
+        
+        if (error) {
+          if (error.code === '23505' && error.constraint === 'email_events_sg_event_id_key') {
+            // Duplicata - evento já processado
+            console.log(`🔄 Evento duplicado ignorado: ${sg_event_id}`);
+            duplicateEvents++;
+          } else {
+            console.error(`❌ Erro ao salvar evento ${eventType} para ${email}:`, error);
+            errors++;
+          }
+        } else {
+          console.log(`✅ Evento ${eventType} salvo para ${email}`);
+          processedEvents++;
+        }
+        
+      } catch (eventError) {
+        console.error('❌ Erro ao processar evento individual:', eventError);
+        errors++;
+      }
+    }
+    
+    console.log(`📈 Resultado do webhook: ${processedEvents} processados, ${duplicateEvents} duplicatas, ${errors} erros`);
+    
+    // Responder com 200 OK para que o SendGrid saiba que recebemos
+    res.status(200).json({
+      success: true,
+      processed: processedEvents,
+      duplicates: duplicateEvents,
+      errors: errors,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro crítico no webhook SendGrid:', error);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Endpoint para consultar eventos de uma campanha específica
+app.get('/api/tracking/events/:campaignId', authMiddleware, async (req, res) => {
+  try {
+    const { campaignId } = req.params;
+    const { event_type = 'all', limit = 100, offset = 0 } = req.query;
+    
+    console.log(`🔍 Buscando eventos da campanha ${campaignId} para usuário ${req.user.id}`);
+    
+    let query = supabase
+      .from('email_events')
+      .select('*')
+      .eq('campaign_id', campaignId)
+      .eq('user_id', req.user.id)
+      .order('event_timestamp', { ascending: false })
+      .range(offset, offset + limit - 1);
+    
+    if (event_type !== 'all') {
+      query = query.eq('event_type', event_type);
+    }
+    
+    const { data: events, error } = await query;
+    
+    if (error) {
+      console.error('❌ Erro ao buscar eventos:', error);
+      return res.status(500).json({ error: 'Erro ao buscar eventos' });
+    }
+    
+    console.log(`📊 Encontrados ${events.length} eventos`);
+    
+    res.json({
+      success: true,
+      events,
+      total: events.length,
+      campaign_id: campaignId
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao buscar eventos da campanha:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Endpoint para consultar quem abriu emails de uma campanha
+app.get('/api/tracking/opens/:campaignId', authMiddleware, async (req, res) => {
+  try {
+    const { campaignId } = req.params;
+    
+    console.log(`👁️ Buscando aberturas da campanha ${campaignId} para usuário ${req.user.id}`);
+    
+    const { data: opens, error } = await supabase
+      .from('email_events')
+      .select('contact_email, event_timestamp, user_agent, ip')
+      .eq('campaign_id', campaignId)
+      .eq('user_id', req.user.id)
+      .eq('event_type', 'open')
+      .order('event_timestamp', { ascending: false });
+    
+    if (error) {
+      console.error('❌ Erro ao buscar aberturas:', error);
+      return res.status(500).json({ error: 'Erro ao buscar aberturas' });
+    }
+    
+    // Agrupar por email (um contato pode abrir várias vezes)
+    const uniqueOpeners = {};
+    const allOpens = [];
+    
+    opens.forEach(open => {
+      allOpens.push(open);
+      
+      if (!uniqueOpeners[open.contact_email]) {
+        uniqueOpeners[open.contact_email] = {
+          email: open.contact_email,
+          first_open: open.event_timestamp,
+          user_agent: open.user_agent,
+          ip: open.ip,
+          open_count: 1
+        };
+      } else {
+        uniqueOpeners[open.contact_email].open_count++;
+      }
+    });
+    
+    const uniqueOpenersArray = Object.values(uniqueOpeners);
+    
+    console.log(`👁️ ${uniqueOpenersArray.length} contatos únicos abriram (${allOpens.length} aberturas totais)`);
+    
+    res.json({
+      success: true,
+      unique_openers: uniqueOpenersArray,
+      total_opens: allOpens.length,
+      unique_opens: uniqueOpenersArray.length,
+      campaign_id: campaignId,
+      all_opens: allOpens
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao buscar aberturas da campanha:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Endpoint para consultar estatísticas de eventos por usuário
+app.get('/api/tracking/stats', authMiddleware, async (req, res) => {
+  try {
+    const { period = '30' } = req.query;
+    const periodDays = parseInt(period);
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - periodDays);
+    
+    console.log(`📊 Buscando estatísticas de eventos dos últimos ${periodDays} dias para usuário ${req.user.id}`);
+    
+    const { data: events, error } = await supabase
+      .from('email_events')
+      .select('event_type, event_timestamp, campaign_id')
+      .eq('user_id', req.user.id)
+      .gte('event_timestamp', startDate.toISOString());
+    
+    if (error) {
+      console.error('❌ Erro ao buscar estatísticas:', error);
+      return res.status(500).json({ error: 'Erro ao buscar estatísticas' });
+    }
+    
+    // Agrupar estatísticas
+    const stats = {
+      total_events: events.length,
+      by_type: {},
+      by_day: {},
+      campaigns_with_events: new Set()
+    };
+    
+    events.forEach(event => {
+      // Por tipo
+      stats.by_type[event.event_type] = (stats.by_type[event.event_type] || 0) + 1;
+      
+      // Por dia
+      const day = event.event_timestamp.split('T')[0];
+      stats.by_day[day] = (stats.by_day[day] || 0) + 1;
+      
+      // Campanhas com eventos
+      if (event.campaign_id) {
+        stats.campaigns_with_events.add(event.campaign_id);
+      }
+    });
+    
+    stats.campaigns_with_events = stats.campaigns_with_events.size;
+    
+    console.log(`📊 Estatísticas: ${stats.total_events} eventos, ${Object.keys(stats.by_type).length} tipos`);
+    
+    res.json({
+      success: true,
+      period_days: periodDays,
+      ...stats
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao buscar estatísticas de eventos:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
 // ========== ENDPOINTS DE ENVIO DE EMAIL ==========
 
 // Endpoint: Envio Direto de Email
 app.post('/api/email/send', authMiddleware, async (req, res) => {
-  const { to, subject, html, text, cc, bcc, attachments, template_vars } = req.body;
+  const { to, subject, html, text, cc, bcc, attachments, template_vars, campaign_id } = req.body;
   
   try {
     // Validação
@@ -342,8 +684,36 @@ app.post('/api/email/send', authMiddleware, async (req, res) => {
       from: 'avisos@lembretescredilly.com', // Sender verificado
       subject,
       html: finalHtml,
-      text: finalText
+      text: finalText,
+      // Ativar rastreamento de abertura e cliques
+      tracking_settings: {
+        click_tracking: {
+          enable: true,
+          enable_text: false
+        },
+        open_tracking: {
+          enable: true
+        },
+        subscription_tracking: {
+          enable: false
+        }
+      }
     };
+
+    // Adicionar custom_args para rastreamento se campaign_id fornecido
+    if (campaign_id) {
+      msg.custom_args = {
+        campaign_id: campaign_id,
+        user_id: req.user.id,
+        send_type: 'direct'
+      };
+    } else {
+      // Mesmo para envios diretos, incluir user_id para rastreamento
+      msg.custom_args = {
+        user_id: req.user.id,
+        send_type: 'direct'
+      };
+    }
 
     // Adicionar campos opcionais
     if (cc) msg.cc = cc;
@@ -573,11 +943,26 @@ app.post('/api/campaign/send', authMiddleware, async (req, res) => {
             from: campaign.remetente,
             subject: campaign.assunto,
             html: personalizedHtml,
+            // Ativar rastreamento de abertura e cliques
+            tracking_settings: {
+              click_tracking: {
+                enable: true,
+                enable_text: false
+              },
+              open_tracking: {
+                enable: true
+              },
+              subscription_tracking: {
+                enable: false
+              }
+            },
             // Adicionar headers de rastreamento opcionais
             custom_args: {
               campaign_id: campaign_id,
               contact_id: contact.id,
-              batch_index: batchIndex.toString()
+              user_id: req.user.id,
+              batch_index: batchIndex.toString(),
+              send_type: 'campaign'
             }
           };
         });
@@ -2197,83 +2582,353 @@ app.get('/api/stats/campaigns/:id', authMiddleware, async (req, res) => {
 });
 
 // Estatísticas gerais do usuário
-app.get('/api/stats/dashboard', authMiddleware, async (req, res) => {
+// =====================================
+// MÉTRICAS SENDGRID INTEGRADAS
+// =====================================
+
+// Estatísticas globais do SendGrid
+app.get('/api/stats/sendgrid/global', authMiddleware, async (req, res) => {
   try {
-    const { period = '30' } = req.query; // período em dias
-    const periodDays = parseInt(period);
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - periodDays);
+    const { start_date = null, end_date = null, limit = 10 } = req.query;
+    
+    const querystring = new URLSearchParams();
+    if (start_date) querystring.append('start_date', start_date);
+    if (end_date) querystring.append('end_date', end_date);
+    if (limit) querystring.append('limit', limit);
 
-    // Estatísticas gerais
-    const [
-      { data: campaigns },
-      { data: templates },
-      { data: contacts },
-      { data: suppressions },
-      { data: recentStats },
-      { data: logs }
-    ] = await Promise.all([
-      supabase.from('campanhas').select('status, created_at, estatisticas').eq('user_id', req.user.id),
-      supabase.from('templates').select('id').eq('user_id', req.user.id),
-      supabase.from('contatos').select('id').eq('user_id', req.user.id),
-      supabase.from('suppressions').select('type').eq('user_id', req.user.id),
-      supabase.from('email_statistics').select('event_type, timestamp').eq('user_id', req.user.id).gte('timestamp', startDate.toISOString()),
-      supabase.from('logs').select('action, status, created_at').eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(10)
-    ]);
+    const request = {
+      url: `/v3/stats?${querystring.toString()}`,
+      method: 'GET',
+    };
 
-    // Agrupar campanhas por status
-    const campaignsByStatus = {};
-    let totalEmailsSent = 0;
-    (campaigns || []).forEach(campaign => {
-      campaignsByStatus[campaign.status] = (campaignsByStatus[campaign.status] || 0) + 1;
-      if (campaign.estatisticas?.sent_successfully) {
-        totalEmailsSent += campaign.estatisticas.sent_successfully;
-      }
-    });
+    const [response] = await client.request(request);
+    
+    // Processar dados para o dashboard
+    let totalStats = {
+      requests: 0,
+      delivered: 0,
+      opens: 0,
+      unique_opens: 0,
+      clicks: 0,
+      unique_clicks: 0,
+      bounces: 0,
+      spam_reports: 0,
+      unsubscribes: 0
+    };
 
-    // Agrupar supressões por tipo
-    const suppressionsByType = {};
-    (suppressions || []).forEach(suppression => {
-      suppressionsByType[suppression.type] = (suppressionsByType[suppression.type] || 0) + 1;
-    });
+    if (response.body && Array.isArray(response.body)) {
+      response.body.forEach(statGroup => {
+        if (statGroup.stats && Array.isArray(statGroup.stats)) {
+          statGroup.stats.forEach(stat => {
+            totalStats.requests += stat.metrics?.requests || 0;
+            totalStats.delivered += stat.metrics?.delivered || 0;
+            totalStats.opens += stat.metrics?.opens || 0;
+            totalStats.unique_opens += stat.metrics?.unique_opens || 0;
+            totalStats.clicks += stat.metrics?.clicks || 0;
+            totalStats.unique_clicks += stat.metrics?.unique_clicks || 0;
+            totalStats.bounces += stat.metrics?.bounces || 0;
+            totalStats.spam_reports += stat.metrics?.spam_reports || 0;
+            totalStats.unsubscribes += stat.metrics?.unsubscribes || 0;
+          });
+        }
+      });
+    }
 
-    // Agrupar estatísticas de email por tipo
-    const eventsByType = {};
-    const dailyStats = {};
-    (recentStats || []).forEach(stat => {
-      eventsByType[stat.event_type] = (eventsByType[stat.event_type] || 0) + 1;
-      
-      const date = new Date(stat.timestamp).toISOString().split('T')[0];
-      if (!dailyStats[date]) dailyStats[date] = {};
-      dailyStats[date][stat.event_type] = (dailyStats[date][stat.event_type] || 0) + 1;
-    });
-
-    // Atividade recente
-    const recentActivity = (logs || []).map(log => ({
-      action: log.action,
-      status: log.status,
-      timestamp: log.created_at
-    }));
+    // Calcular taxas de performance
+    const deliveryRate = totalStats.requests > 0 ? ((totalStats.delivered / totalStats.requests) * 100).toFixed(2) : 0;
+    const openRate = totalStats.delivered > 0 ? ((totalStats.unique_opens / totalStats.delivered) * 100).toFixed(2) : 0;
+    const clickRate = totalStats.delivered > 0 ? ((totalStats.unique_clicks / totalStats.delivered) * 100).toFixed(2) : 0;
+    const bounceRate = totalStats.requests > 0 ? ((totalStats.bounces / totalStats.requests) * 100).toFixed(2) : 0;
 
     res.json({
       success: true,
-      period_days: periodDays,
-      overview: {
-        total_campaigns: campaigns?.length || 0,
-        total_templates: templates?.length || 0,
-        total_contacts: contacts?.length || 0,
-        total_emails_sent: totalEmailsSent,
-        total_suppressions: suppressions?.length || 0
+      source: 'SendGrid API',
+      period: { start_date, end_date },
+      stats: totalStats,
+      performance: {
+        delivery_rate: deliveryRate,
+        open_rate: openRate,
+        click_rate: clickRate,
+        bounce_rate: bounceRate
       },
-      campaigns_by_status: campaignsByStatus,
-      suppressions_by_type: suppressionsByType,
-      email_events: eventsByType,
-      daily_stats: dailyStats,
-      recent_activity: recentActivity
+      raw_data: response.body
     });
 
   } catch (error) {
+    console.error('Erro ao buscar estatísticas do SendGrid:', error.message);
+    res.status(500).json({ 
+      error: 'Erro ao conectar com SendGrid',
+      message: error.message,
+      source: 'SendGrid API'
+    });
+  }
+});
+
+// Supressões do SendGrid (Bounces, Blocks, etc.)
+app.get('/api/stats/sendgrid/suppressions', authMiddleware, async (req, res) => {
+  try {
+    const { limit = 100, offset = 0 } = req.query;
+
+    // Buscar diferentes tipos de supressões em paralelo
+    const requests = [
+      { url: `/v3/suppression/bounces?limit=${limit}&offset=${offset}`, type: 'bounces' },
+      { url: `/v3/suppression/blocks?limit=${limit}&offset=${offset}`, type: 'blocks' },
+      { url: `/v3/suppression/spam_reports?limit=${limit}&offset=${offset}`, type: 'spam_reports' },
+      { url: `/v3/suppression/unsubscribes?limit=${limit}&offset=${offset}`, type: 'unsubscribes' }
+    ];
+
+    const suppressionData = {};
+    const suppressionCounts = {};
+
+    for (const req of requests) {
+      try {
+        const [response] = await client.request({ url: req.url, method: 'GET' });
+        suppressionData[req.type] = response.body || [];
+        suppressionCounts[req.type] = Array.isArray(response.body) ? response.body.length : 0;
+      } catch (error) {
+        console.warn(`Erro ao buscar ${req.type}:`, error.message);
+        suppressionData[req.type] = [];
+        suppressionCounts[req.type] = 0;
+      }
+    }
+
+    const totalSuppressions = Object.values(suppressionCounts).reduce((sum, count) => sum + count, 0);
+
+    res.json({
+      success: true,
+      source: 'SendGrid API',
+      summary: {
+        total_suppressions: totalSuppressions,
+        ...suppressionCounts
+      },
+      suppressions: suppressionData
+    });
+
+  } catch (error) {
+    console.error('Erro ao buscar supressões do SendGrid:', error.message);
+    res.status(500).json({ 
+      error: 'Erro ao conectar com SendGrid',
+      message: error.message,
+      source: 'SendGrid API'
+    });
+  }
+});
+
+// Endpoint de teste para verificar gráficos (sem autenticação)
+app.get('/api/stats/dashboard-test', async (req, res) => {
+  try {
+    // Simular dados do SendGrid para teste dos gráficos
+    const mockSendgridData = {
+      success: true,
+      source: 'SendGrid API (Test Mode)',
+      period_days: 30,
+      overview: {
+        total_campaigns: 4,
+        total_templates: 8,
+        total_contacts: 150,
+        total_emails_sent: 1250,
+        total_delivered: 1180,
+        total_opens: 450,
+        total_clicks: 125,
+        total_bounces: 35,
+        total_suppressions: 15
+      },
+      sendgrid_metrics: {
+        requests: 1250,
+        delivered: 1180,
+        opens: 580,
+        unique_opens: 450,
+        clicks: 180,
+        unique_clicks: 125,
+        bounces: 35,
+        spam_reports: 8,
+        unsubscribes: 7
+      },
+      performance: {
+        delivery_rate: '94.40',
+        open_rate: '38.14',
+        click_rate: '10.59',
+        bounce_rate: '2.80'
+      },
+      campaigns_by_status: {
+        enviada: 2,
+        agendada: 1,
+        rascunho: 1
+      }
+    };
+
+    res.json(mockSendgridData);
+  } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Dashboard integrado: SendGrid + dados locais
+app.get('/api/stats/dashboard', authMiddleware, async (req, res) => {
+  try {
+    const { period = '30' } = req.query;
+    const periodDays = parseInt(period);
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - periodDays);
+    const endDate = new Date();
+
+    // Formatar datas para SendGrid (YYYY-MM-DD)
+    const sendgridStartDate = startDate.toISOString().split('T')[0];
+    const sendgridEndDate = endDate.toISOString().split('T')[0];
+
+    // Buscar dados locais (Supabase) e SendGrid em paralelo
+    const [
+      campaigns,
+      templates,
+      contacts,
+      sendgridStats,
+      sendgridSuppressions
+    ] = await Promise.allSettled([
+      supabase.from('campanhas').select('status, created_at, estatisticas').eq('user_id', req.user.id),
+      supabase.from('templates').select('id').eq('user_id', req.user.id),
+      supabase.from('contatos').select('id').eq('user_id', req.user.id),
+      // SendGrid Global Stats
+      client.request({
+        url: `/v3/stats?start_date=${sendgridStartDate}&end_date=${sendgridEndDate}&limit=10`,
+        method: 'GET',
+      }).catch(err => ({ value: null, error: err.message })),
+      // SendGrid Suppressions
+      client.request({
+        url: `/v3/suppression/bounces?limit=50`,
+        method: 'GET',
+      }).catch(err => ({ value: null, error: err.message }))
+    ]);
+
+    // Processar dados locais
+    const campaignsByStatus = {};
+    let totalEmailsSent = 0;
+    
+    if (campaigns.status === 'fulfilled') {
+      (campaigns.value?.data || []).forEach(campaign => {
+        campaignsByStatus[campaign.status] = (campaignsByStatus[campaign.status] || 0) + 1;
+        if (campaign.estatisticas?.sent_successfully) {
+          totalEmailsSent += campaign.estatisticas.sent_successfully;
+        }
+      });
+    }
+
+    // Processar dados do SendGrid
+    let sendgridMetrics = {
+      requests: 0,
+      delivered: 0,
+      opens: 0,
+      unique_opens: 0,
+      clicks: 0,
+      unique_clicks: 0,
+      bounces: 0,
+      spam_reports: 0,
+      unsubscribes: 0
+    };
+
+    let performanceMetrics = {
+      delivery_rate: '0.00',
+      open_rate: '0.00',
+      click_rate: '0.00',
+      bounce_rate: '0.00'
+    };
+
+    console.log('🔍 DEBUG SendGrid Stats Status:', sendgridStats.status);
+    console.log('🔍 DEBUG SendGrid Stats Value:', JSON.stringify(sendgridStats.value, null, 2));
+    
+    if (sendgridStats.status === 'fulfilled' && sendgridStats.value) {
+      const [response] = sendgridStats.value;
+      console.log('📊 Response body type:', typeof response?.body);
+      console.log('📊 Response body length:', Array.isArray(response?.body) ? response.body.length : 'not array');
+      
+      if (response.body && Array.isArray(response.body)) {
+        console.log('📈 Processando', response.body.length, 'grupos de estatísticas');
+        
+        response.body.forEach((statGroup, groupIndex) => {
+          console.log(`📊 Grupo ${groupIndex}:`, statGroup.date, '- Stats:', statGroup.stats?.length || 0);
+          
+          if (statGroup.stats && Array.isArray(statGroup.stats)) {
+            statGroup.stats.forEach((stat, statIndex) => {
+              console.log(`   Stat ${statIndex}:`, stat.metrics);
+              
+              sendgridMetrics.requests += stat.metrics?.requests || 0;
+              sendgridMetrics.delivered += stat.metrics?.delivered || 0;
+              sendgridMetrics.opens += stat.metrics?.opens || 0;
+              sendgridMetrics.unique_opens += stat.metrics?.unique_opens || 0;
+              sendgridMetrics.clicks += stat.metrics?.clicks || 0;
+              sendgridMetrics.unique_clicks += stat.metrics?.unique_clicks || 0;
+              sendgridMetrics.bounces += stat.metrics?.bounces || 0;
+              sendgridMetrics.spam_reports += stat.metrics?.spam_reports || 0;
+              sendgridMetrics.unsubscribes += stat.metrics?.unsubscribes || 0;
+            });
+          }
+        });
+
+        console.log('📊 Totais calculados:', sendgridMetrics);
+
+        // Calcular taxas de performance
+        performanceMetrics.delivery_rate = sendgridMetrics.requests > 0 ? 
+          ((sendgridMetrics.delivered / sendgridMetrics.requests) * 100).toFixed(2) : '0.00';
+        performanceMetrics.open_rate = sendgridMetrics.delivered > 0 ? 
+          ((sendgridMetrics.unique_opens / sendgridMetrics.delivered) * 100).toFixed(2) : '0.00';
+        performanceMetrics.click_rate = sendgridMetrics.delivered > 0 ? 
+          ((sendgridMetrics.unique_clicks / sendgridMetrics.delivered) * 100).toFixed(2) : '0.00';
+        performanceMetrics.bounce_rate = sendgridMetrics.requests > 0 ? 
+          ((sendgridMetrics.bounces / sendgridMetrics.requests) * 100).toFixed(2) : '0.00';
+          
+        console.log('📈 Métricas de performance:', performanceMetrics);
+      } else {
+        console.log('⚠️ Response body não é um array válido');
+      }
+    } else {
+      console.log('❌ SendGrid stats não disponível:', sendgridStats.status);
+      if (sendgridStats.reason) {
+        console.log('❌ Erro:', sendgridStats.reason);
+      }
+    }
+
+    // Processsar supressões do SendGrid
+    let suppressionCount = 0;
+    if (sendgridSuppressions.status === 'fulfilled' && sendgridSuppressions.value) {
+      const [response] = sendgridSuppressions.value;
+      if (Array.isArray(response.body)) {
+        suppressionCount = response.body.length;
+      }
+    }
+
+    // Resposta unificada
+    res.json({
+      success: true,
+      source: 'SendGrid + Local',
+      period_days: periodDays,
+      overview: {
+        // Dados locais
+        total_campaigns: campaigns.status === 'fulfilled' ? (campaigns.value?.data?.length || 0) : 0,
+        total_templates: templates.status === 'fulfilled' ? (templates.value?.data?.length || 0) : 0,
+        total_contacts: contacts.status === 'fulfilled' ? (contacts.value?.data?.length || 0) : 0,
+        
+        // Dados do SendGrid (mais precisos)
+        total_emails_sent: sendgridMetrics.requests,
+        total_delivered: sendgridMetrics.delivered,
+        total_opens: sendgridMetrics.unique_opens,
+        total_clicks: sendgridMetrics.unique_clicks,
+        total_bounces: sendgridMetrics.bounces,
+        total_suppressions: suppressionCount
+      },
+      sendgrid_metrics: sendgridMetrics,
+      performance: performanceMetrics,
+      campaigns_by_status: campaignsByStatus,
+      period: {
+        start_date: sendgridStartDate,
+        end_date: sendgridEndDate
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro no dashboard integrado:', error.message);
+    res.status(500).json({ 
+      error: error.message,
+      source: 'Dashboard Integrado'
+    });
   }
 });
 
