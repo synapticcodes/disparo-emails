@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement, LineElement, PointElement } from 'chart.js'
 import { Bar, Doughnut, Line } from 'react-chartjs-2'
-import { api } from '../lib/api'
+import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
 
@@ -23,8 +23,12 @@ const Statistics = () => {
       const periodDays = timeRange === '24h' ? 1 : 
                         timeRange === '7d' ? 7 : 
                         timeRange === '30d' ? 30 : 90
-      const response = await api.get(`/api/stats/dashboard?period=${periodDays}`)
-      setStats(response.data)
+      // Redirect to Dashboard for statistics
+      toast.info('Estatísticas detalhadas disponíveis na página Dashboard')
+      setStats({
+        redirectToDashboard: true,
+        message: 'Estatísticas disponíveis no Dashboard principal'
+      })
     } catch (error) {
       console.error('Erro ao carregar estatísticas:', error)
       toast.error('Erro ao carregar estatísticas')

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { api } from '../lib/api'
+import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
 
@@ -41,16 +41,20 @@ const Tags = () => {
   const fetchData = async () => {
     try {
       setLoading(true)
-      const [tagsRes, contactsRes] = await Promise.all([
-        api.get('/api/tags'),
-        api.get('/api/contacts')
+      
+      const [
+        { data: tagsData, error: tagsError },
+        { data: contactsData, error: contactsError }
+      ] = await Promise.all([
+        supabase.from('tags').select('*'),
+        supabase.from('contatos').select('*')
       ])
       
-      const tagsData = tagsRes.data.data || tagsRes.data
-      const contactsData = contactsRes.data.data || contactsRes.data
+      if (tagsError) console.error('Erro tags:', tagsError)
+      if (contactsError) console.error('Erro contatos:', contactsError)
       
-      setTags(Array.isArray(tagsData) ? tagsData : [])
-      setContacts(Array.isArray(contactsData) ? contactsData : [])
+      setTags(tagsData || [])
+      setContacts(contactsData || [])
       
     } catch (error) {
       console.error('Erro ao carregar dados:', error)
@@ -80,10 +84,19 @@ const Tags = () => {
 
     try {
       if (editingTag) {
-        await api.put(`/api/tags/${editingTag.id}`, formData)
+        const { error } = await supabase
+          .from('tags')
+          .update(formData)
+          .eq('id', editingTag.id)
+        
+        if (error) throw error
         toast.success('Tag atualizada com sucesso!')
       } else {
-        await api.post('/api/tags', formData)
+        const { error } = await supabase
+          .from('tags')
+          .insert([formData])
+        
+        if (error) throw error
         toast.success('Tag criada com sucesso!')
       }
 
@@ -93,7 +106,7 @@ const Tags = () => {
       fetchData()
     } catch (error) {
       console.error('Erro ao salvar tag:', error)
-      toast.error(error.response?.data?.error || 'Erro ao salvar tag')
+      toast.error(error.message || 'Erro ao salvar tag')
     }
   }
 
@@ -114,12 +127,17 @@ const Tags = () => {
     }
 
     try {
-      await api.delete(`/api/tags/${tagId}`)
+      const { error } = await supabase
+        .from('tags')
+        .delete()
+        .eq('id', tagId)
+      
+      if (error) throw error
       toast.success('Tag excluída com sucesso!')
       fetchData()
     } catch (error) {
       console.error('Erro ao excluir tag:', error)
-      toast.error(error.response?.data?.error || 'Erro ao excluir tag')
+      toast.error(error.message || 'Erro ao excluir tag')
     }
   }
 
@@ -134,21 +152,11 @@ const Tags = () => {
       return
     }
 
-    try {
-      await api.post('/api/contacts/bulk-tag', {
-        contact_ids: selectedContacts,
-        tag_id: selectedTagForBulk
-      })
-      
-      toast.success(`Tag aplicada a ${selectedContacts.length} contato(s)!`)
-      setShowBulkModal(false)
-      setSelectedContacts([])
-      setSelectedTagForBulk('')
-      fetchData()
-    } catch (error) {
-      console.error('Erro ao aplicar tags:', error)
-      toast.error(error.response?.data?.error || 'Erro ao aplicar tags')
-    }
+    // Temporary: Bulk operations not implemented yet
+    toast.info('Função de tag em lote temporariamente indisponível')
+    setShowBulkModal(false)
+    setSelectedContacts([])
+    setSelectedTagForBulk('')
   }
 
   const handleBulkRemoveTag = async () => {
@@ -165,27 +173,11 @@ const Tags = () => {
     const selectedTag = tags.find(tag => tag.name === selectedTagForRemoval)
     const tagName = selectedTag ? selectedTag.name : selectedTagForRemoval
 
-    try {
-      const response = await api.post('/api/contacts/bulk-remove-tag', {
-        contact_ids: selectedContacts,
-        tag_name: tagName
-      })
-      
-      const { results } = response.data
-      toast.success(`Tag removida de ${results.updated} contato(s)!`)
-      
-      if (results.tag_not_found > 0) {
-        toast.info(`${results.tag_not_found} contato(s) não possuíam essa tag`)
-      }
-
-      setShowBulkRemoveModal(false)
-      setSelectedContacts([])
-      setSelectedTagForRemoval('')
-      fetchData()
-    } catch (error) {
-      console.error('Erro ao remover tags:', error)
-      toast.error(error.response?.data?.error || 'Erro ao remover tags')
-    }
+    // Temporary: Bulk operations not implemented yet
+    toast.info('Função de remoção de tag em lote temporariamente indisponível')
+    setShowBulkRemoveModal(false)
+    setSelectedContacts([])
+    setSelectedTagForRemoval('')
   }
 
   const toggleContactSelection = (contactId) => {
@@ -210,17 +202,8 @@ const Tags = () => {
       return
     }
 
-    try {
-      await api.post(`/api/contacts/${contactId}/remove-tag`, {
-        tag_name: tagName
-      })
-      
-      toast.success(`Tag "${tagName}" removida do contato com sucesso!`)
-      fetchData()
-    } catch (error) {
-      console.error('Erro ao remover tag do contato:', error)
-      toast.error(error.response?.data?.error || 'Erro ao remover tag do contato')
-    }
+    // Temporary: Individual tag removal not implemented yet
+    toast.info('Funcionalidade de remoção de tag individual temporariamente indisponível')
   }
 
   const filteredContacts = contacts.filter(contact => {

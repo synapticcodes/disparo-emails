@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react'
-import { api, tags } from '../lib/api'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
@@ -126,10 +125,19 @@ const Contacts = () => {
       }
 
       if (editingContact) {
-        await api.put(`/api/contacts/${editingContact.id}`, contactData)
+        const { error } = await supabase
+          .from('contatos')
+          .update(contactData)
+          .eq('id', editingContact.id)
+        
+        if (error) throw error
         toast.success('Contato atualizado com sucesso!')
       } else {
-        await api.post('/api/contacts', contactData)
+        const { error } = await supabase
+          .from('contatos')
+          .insert([contactData])
+        
+        if (error) throw error
         toast.success('Contato criado com sucesso!')
       }
 
@@ -164,12 +172,17 @@ const Contacts = () => {
     }
 
     try {
-      await api.delete(`/api/contacts/${contactId}`)
+      const { error } = await supabase
+        .from('contatos')
+        .delete()
+        .eq('id', contactId)
+      
+      if (error) throw error
       toast.success('Contato excluído com sucesso!')
       fetchData()
     } catch (error) {
       console.error('Erro ao excluir contato:', error)
-      toast.error(error.response?.data?.error || 'Erro ao excluir contato')
+      toast.error(error.message || 'Erro ao excluir contato')
     }
   }
 

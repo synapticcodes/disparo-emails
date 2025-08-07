@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react'
-import { api, variables as variablesApi, datasets as datasetsApi } from '../lib/api'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import SimpleVariableEditor from '../components/SimpleVariableEditor'
@@ -273,20 +272,29 @@ const Templates = () => {
 
     try {
       if (editingTemplate) {
-        await api.put(`/api/templates/${editingTemplate.id}`, formData)
+        const { error } = await supabase
+          .from('templates')
+          .update(formData)
+          .eq('id', editingTemplate.id)
+        
+        if (error) throw error
         toast.success('Template atualizado com sucesso!')
       } else {
-        await api.post('/api/templates', formData)
+        const { error } = await supabase
+          .from('templates')
+          .insert([formData])
+        
+        if (error) throw error
         toast.success('Template criado com sucesso!')
       }
 
       setShowModal(false)
       setEditingTemplate(null)
-      setFormData({ nome: '', subject: '', html: '' })
+      setFormData({ nome: '', subject: '', html: '', dataset_id: null })
       fetchTemplates()
     } catch (error) {
       console.error('Erro ao salvar template:', error)
-      toast.error(error.response?.data?.error || 'Erro ao salvar template')
+      toast.error(error.message || 'Erro ao salvar template')
     }
   }
 
@@ -307,12 +315,17 @@ const Templates = () => {
     }
 
     try {
-      await api.delete(`/api/templates/${templateId}`)
+      const { error } = await supabase
+        .from('templates')
+        .delete()
+        .eq('id', templateId)
+      
+      if (error) throw error
       toast.success('Template excluído com sucesso!')
       fetchTemplates()
     } catch (error) {
       console.error('Erro ao excluir template:', error)
-      toast.error(error.response?.data?.error || 'Erro ao excluir template')
+      toast.error(error.message || 'Erro ao excluir template')
     }
   }
 

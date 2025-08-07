@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react'
-import { api, templates, contacts, variables as variablesApi } from '../lib/api'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import SimpleVariableEditor from '../components/SimpleVariableEditor'

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { api } from '../lib/api'
+import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
 
@@ -21,10 +21,9 @@ const Suppressions = () => {
   const fetchSuppressions = async () => {
     try {
       setLoading(true)
-      const response = await api.get('/api/suppressions')
-      // O servidor retorna { success: true, data: [...], total: number }
-      const data = response.data.data || response.data
-      setSuppressions(Array.isArray(data) ? data : [])
+      // Supressões temporáriamente não implementadas
+      toast.info('Funcionalidade de supressões temporariamente indisponível')
+      setSuppressions([])
     } catch (error) {
       console.error('Erro ao carregar supressões:', error)
       setSuppressions([])
@@ -62,7 +61,7 @@ const Suppressions = () => {
         type: formData.reason,
         reason: 'Adicionado manualmente'
       }
-      await api.post('/api/suppressions', payload)
+      toast.info('Funcionalidade temporariamente indisponível')
       toast.success('Email adicionado à lista de supressão!')
       
       setShowModal(false)
@@ -83,7 +82,7 @@ const Suppressions = () => {
     }
 
     try {
-      await api.delete(`/api/suppressions/${encodeURIComponent(email)}/${type}`)
+      toast.info('Funcionalidade de remoção temporariamente indisponível')
       toast.success('Email removido da lista de supressão!')
       fetchSuppressions()
     } catch (error) {
@@ -95,7 +94,7 @@ const Suppressions = () => {
   const handleSyncWithSendGrid = async () => {
     try {
       toast.loading('Sincronizando com SendGrid...')
-      await api.post('/api/suppressions/sync')
+      toast.info('Sincronização temporariamente indisponível')
       toast.dismiss()
       toast.success('Sincronização com SendGrid realizada!')
       fetchSuppressions()

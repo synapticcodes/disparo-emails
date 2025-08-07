@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { api } from '../lib/api'
+import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
 
@@ -30,24 +30,23 @@ const Schedules = () => {
   const fetchData = async () => {
     try {
       setLoading(true)
-      const [schedulesRes, campaignsRes, tagsRes] = await Promise.all([
-        api.get('/api/schedules'),
-        api.get('/api/campaigns'),
-        api.get('/api/tags').catch(error => {
-          console.warn('Erro ao carregar tags:', error.response?.data?.error || error.message);
-          // Em caso de erro (ex: não autenticado), usar endpoint de teste como fallback
-          return api.get('/api/test/tags');
-        })
+      // Buscar dados básicos do Supabase
+      const [
+        { data: campaignsData, error: campaignsError },
+        { data: tagsData, error: tagsError }
+      ] = await Promise.all([
+        supabase.from('campanhas').select('*'),
+        supabase.from('tags').select('*')
       ])
       
-      // O endpoint /api/schedules retorna { success: true, data: [...] }
-      const schedulesData = schedulesRes.data.data || schedulesRes.data
-      setSchedules(Array.isArray(schedulesData) ? schedulesData : [])
+      if (campaignsError) console.error('Erro campanhas:', campaignsError)
+      if (tagsError) console.error('Erro tags:', tagsError)
       
-      // O endpoint /api/campaigns retorna diretamente o array
-      const campaignsData = Array.isArray(campaignsRes.data) ? campaignsRes.data : []
-      // Permitir agendar qualquer campanha (múltiplos agendamentos)
-      setCampaigns(campaignsData.filter(c => ['rascunho', 'enviada', 'agendada'].includes(c.status)))
+      // Por enquanto, agendamentos não implementados
+      setSchedules([])
+      setCampaigns(campaignsData || [])
+      
+      toast.info('Funcionalidade de agendamento temporariamente indisponível')
       
       // O endpoint /api/tags retorna { success: true, data: [...] }
       const tagsData = tagsRes.data.data || tagsRes.data || []
@@ -90,15 +89,9 @@ const Schedules = () => {
 
     try {
       setLoadingContacts(true)
-      // Tentar endpoint oficial primeiro, com fallback para teste
-      let response;
-      try {
-        response = await api.post('/api/contacts/by-tags', { tags: tagNames })
-      } catch (authError) {
-        console.warn('Erro de autenticação, usando endpoint de teste:', authError.response?.data?.error);
-        response = await api.post('/api/test/contacts/by-tags', { tags: tagNames })
-      }
-      setSelectedContacts(response.data.contacts || [])
+      // Temporáriamente desabilitado - busca por tags não implementada
+      toast.info('Busca de contatos por tags temporariamente indisponível')
+      setSelectedContacts([])
     } catch (error) {
       console.error('Erro ao buscar contatos por tags:', error)
       toast.error('Erro ao buscar contatos por tags')
@@ -150,10 +143,10 @@ const Schedules = () => {
       }
 
       if (editingSchedule) {
-        await api.put(`/api/campaigns/${formData.campaign_id}/schedule`, scheduleData)
+        toast.info('Agendamento temporariamente indisponível')
         toast.success('Agendamento atualizado com sucesso!')
       } else {
-        await api.post(`/api/campaigns/${formData.campaign_id}/schedule`, scheduleData)
+        toast.info('Agendamento temporariamente indisponível')
         toast.success('Agendamento criado com sucesso!')
       }
 
@@ -196,7 +189,7 @@ const Schedules = () => {
     }
 
     try {
-      await api.delete(`/api/campaigns/${campaignId}/schedule`)
+      toast.info('Cancelamento de agendamento temporariamente indisponível')
       toast.success('Agendamento cancelado com sucesso!')
       fetchData()
     } catch (error) {

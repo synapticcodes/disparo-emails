@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement } from 'chart.js'
 import { Bar, Doughnut } from 'react-chartjs-2'
-import { api } from '../lib/api'
 import { debugAuthState } from '../utils/authUtils'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
