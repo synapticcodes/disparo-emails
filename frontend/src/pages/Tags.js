@@ -173,12 +173,18 @@ const Tags = () => {
     try {
       const selectedTag = tags.find(tag => tag.id === selectedTagForBulk)
       
-      await contactsApi.bulkTag({
+      const result = await contactsApi.bulkTag({
         contactIds: selectedContacts,
         tagId: selectedTagForBulk
       })
       
-      toast.success(`Tag "${selectedTag?.nome}" aplicada a ${selectedContacts.length} contato(s) com sucesso!`)
+      const { results } = result.data
+      
+      if (results && results.updated > 0) {
+        toast.success(`Tag "${selectedTag?.nome}" aplicada a ${results.updated} contato(s) com sucesso!`)
+      } else {
+        toast.info(`Todos os ${selectedContacts.length} contato(s) já possuem a tag "${selectedTag?.nome}"`)
+      }
       
       // Log da operação em massa
       await logBulkAction.tagContacts(
@@ -221,12 +227,18 @@ const Tags = () => {
     }
 
     try {
-      await contactsApi.bulkRemoveTag({
+      const result = await contactsApi.bulkRemoveTag({
         contactIds: selectedContacts,
         tagName: selectedTagForRemoval
       })
       
-      toast.success(`Tag "${selectedTagForRemoval}" removida de ${selectedContacts.length} contato(s) com sucesso!`)
+      const { results } = result.data
+      
+      if (results && results.updated > 0) {
+        toast.success(`Tag "${selectedTagForRemoval}" removida de ${results.updated} contato(s) com sucesso!`)
+      } else if (results && results.not_found > 0) {
+        toast.info(`${results.not_found} contato(s) não possuíam a tag "${selectedTagForRemoval}"`)
+      }
       
       // Log da operação em massa de remoção
       await logBulkAction.removeTagContacts(
@@ -279,12 +291,18 @@ const Tags = () => {
     }
 
     try {
-      await contactsApi.bulkRemoveTag({
+      const result = await contactsApi.bulkRemoveTag({
         contactIds: [contactId],
         tagName: tagName
       })
       
-      toast.success(`Tag "${tagName}" removida do contato "${contactEmail}" com sucesso!`)
+      const { results } = result.data
+      
+      if (results && results.updated > 0) {
+        toast.success(`Tag "${tagName}" removida do contato "${contactEmail}" com sucesso!`)
+      } else if (results && results.not_found > 0) {
+        toast.warning(`Contato "${contactEmail}" não possui a tag "${tagName}"`)
+      }
       
       // Refresh data to show updated tags
       fetchData()

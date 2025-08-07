@@ -370,24 +370,179 @@ export const contacts = {
   },
   bulkTag: async (data) => {
     try {
-      const response = await api.post('/api/contacts/bulk-tag', {
-        contact_ids: data.contactIds,
-        tag_id: data.tagId
-      });
-      return { data: response.data };
+      const { contactIds, tagId } = data;
+      
+      if (!contactIds || !Array.isArray(contactIds) || contactIds.length === 0) {
+        throw new Error('Lista de contatos é obrigatória');
+      }
+
+      if (!tagId) {
+        throw new Error('ID da tag é obrigatório');
+      }
+
+      // Verificar se a tag existe
+      const { data: tag, error: tagError } = await supabase
+        .from('tags')
+        .select('id, nome')
+        .eq('id', tagId)
+        .single();
+
+      if (tagError || !tag) {
+        throw new Error('Tag não encontrada');
+      }
+
+      // Buscar contatos selecionados
+      const { data: contacts, error: contactsError } = await supabase
+        .from('contatos')
+        .select('id, tags, email')
+        .in('id', contactIds);
+
+      if (contactsError) {
+        throw new Error(`Erro ao buscar contatos: ${contactsError.message}`);
+      }
+
+      if (!contacts || contacts.length === 0) {
+        throw new Error('Nenhum contato encontrado');
+      }
+
+      let updatedCount = 0;
+      const errors = [];
+
+      // Atualizar cada contato
+      for (const contact of contacts) {
+        try {
+          let currentTags = contact.tags || [];
+          
+          // Garantir que tags seja um array
+          if (!Array.isArray(currentTags)) {
+            currentTags = [];
+          }
+
+          // Adicionar a tag se ela não estiver presente (evitar duplicatas)
+          if (!currentTags.includes(tagId) && !currentTags.includes(tag.nome)) {
+            currentTags.push(tag.nome);
+
+            const { error: updateError } = await supabase
+              .from('contatos')
+              .update({ 
+                tags: currentTags,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', contact.id);
+
+            if (updateError) {
+              errors.push({ contact_id: contact.id, error: updateError.message });
+            } else {
+              updatedCount++;
+            }
+          } else {
+            // Tag já existe no contato
+            updatedCount++;
+          }
+        } catch (contactError) {
+          errors.push({ contact_id: contact.id, error: contactError.message });
+        }
+      }
+
+      return {
+        data: {
+          success: true,
+          message: `Tag "${tag.nome}" aplicada com sucesso`,
+          results: {
+            total_requested: contactIds.length,
+            updated: updatedCount,
+            errors: errors.length
+          },
+          errors: errors.length > 0 ? errors : undefined
+        }
+      };
+
     } catch (error) {
-      throw new Error(error.response?.data?.error || 'Erro ao aplicar tags em massa');
+      throw new Error(error.message || 'Erro ao aplicar tags em massa');
     }
   },
   bulkRemoveTag: async (data) => {
     try {
-      const response = await api.post('/api/contacts/bulk-remove-tag', {
-        contact_ids: data.contactIds,
-        tag_name: data.tagName
-      });
-      return { data: response.data };
+      const { contactIds, tagName } = data;
+      
+      if (!contactIds || !Array.isArray(contactIds) || contactIds.length === 0) {
+        throw new Error('Lista de contatos é obrigatória');
+      }
+
+      if (!tagName) {
+        throw new Error('Nome da tag é obrigatório');
+      }
+
+      // Buscar contatos selecionados
+      const { data: contacts, error: contactsError } = await supabase
+        .from('contatos')
+        .select('id, tags, email')
+        .in('id', contactIds);
+
+      if (contactsError) {
+        throw new Error(`Erro ao buscar contatos: ${contactsError.message}`);
+      }
+
+      if (!contacts || contacts.length === 0) {
+        throw new Error('Nenhum contato encontrado');
+      }
+
+      let updatedCount = 0;
+      let notFoundCount = 0;
+      const errors = [];
+
+      // Atualizar cada contato
+      for (const contact of contacts) {
+        try {
+          let currentTags = contact.tags || [];
+          
+          // Garantir que tags seja um array
+          if (!Array.isArray(currentTags)) {
+            currentTags = typeof currentTags === 'string' ? currentTags.split(',').map(t => t.trim()) : [];
+          }
+
+          // Remover a tag se ela estiver presente
+          const initialLength = currentTags.length;
+          currentTags = currentTags.filter(tag => tag !== tagName);
+
+          if (currentTags.length === initialLength) {
+            notFoundCount++;
+          } else {
+            const { error: updateError } = await supabase
+              .from('contatos')
+              .update({ 
+                tags: currentTags,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', contact.id);
+
+            if (updateError) {
+              errors.push({ contact_id: contact.id, error: updateError.message });
+            } else {
+              updatedCount++;
+            }
+          }
+        } catch (contactError) {
+          errors.push({ contact_id: contact.id, error: contactError.message });
+        }
+      }
+
+      return {
+        data: {
+          success: true,
+          message: `Tag "${tagName}" removida com sucesso`,
+          results: {
+            total_requested: contactIds.length,
+            updated: updatedCount,
+            not_found: notFoundCount,
+            errors: errors.length
+          },
+          errors: errors.length > 0 ? errors : undefined
+        }
+      };
+
     } catch (error) {
-      throw new Error(error.response?.data?.error || 'Erro ao remover tags em massa');
+      throw new Error(error.message || 'Erro ao remover tags em massa');
     }
   },
 }
