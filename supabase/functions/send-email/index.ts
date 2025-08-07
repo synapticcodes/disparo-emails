@@ -211,6 +211,34 @@ serve(async (req) => {
           body: errorText
         })
 
+        // Save error log to database
+        try {
+          const { error: logError } = await supabase
+            .from('logs')
+            .insert([{
+              user_id: '00000000-0000-0000-0000-000000000000', // UUID padrão para Edge Function
+              action: 'envio_direto',
+              status: 'erro',
+              details: {
+                error_message: `SendGrid Error: ${sendgridResponse.statusText}`,
+                error_code: sendgridResponse.status,
+                recipients_list: to,
+                subject: processedSubject,
+                sendgrid_error: errorText,
+                variables_processed: subject !== processedSubject || html !== processedHtml
+              },
+              ip_address: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '127.0.0.1'
+            }])
+          
+          if (logError) {
+            console.error('⚠️ Failed to save error log:', logError)
+          } else {
+            console.log('✅ Error log saved to database')
+          }
+        } catch (logSaveError) {
+          console.error('⚠️ Error saving error log:', logSaveError)
+        }
+
         return new Response(
           JSON.stringify({ 
             error: 'Erro no SendGrid',
@@ -232,6 +260,37 @@ serve(async (req) => {
       console.log('✅ Message ID:', messageId)
       console.log('✅ SendGrid response body:', responseBody)
 
+      // Save success log to database
+      try {
+        const { error: logError } = await supabase
+          .from('logs')
+          .insert([{
+            user_id: '00000000-0000-0000-0000-000000000000', // UUID padrão para Edge Function
+            action: 'envio_direto',
+            status: 'sucesso',
+            details: {
+              recipients_count: 1,
+              recipients_list: to,
+              subject: processedSubject,
+              message_id: messageId,
+              sendgrid_status: sendgridResponse.status,
+              variables_processed: subject !== processedSubject || html !== processedHtml,
+              has_html: true,
+              template_vars_used: subject !== processedSubject || html !== processedHtml,
+              sent_at: new Date().toISOString()
+            },
+            ip_address: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '127.0.0.1'
+          }])
+        
+        if (logError) {
+          console.error('⚠️ Failed to save success log:', logError)
+        } else {
+          console.log('✅ Success log saved to database')
+        }
+      } catch (logSaveError) {
+        console.error('⚠️ Error saving log:', logSaveError)
+      }
+
       return new Response(
         JSON.stringify({ 
           success: true, 
@@ -248,6 +307,34 @@ serve(async (req) => {
 
     } catch (sendgridError) {
       console.error('💥 SendGrid fetch error:', sendgridError)
+      
+      // Save connection error log to database
+      try {
+        const { error: logError } = await supabase
+          .from('logs')
+          .insert([{
+            user_id: '00000000-0000-0000-0000-000000000000', // UUID padrão para Edge Function
+            action: 'envio_direto',
+            status: 'erro',
+            details: {
+              error_message: `Conexão SendGrid falhou: ${sendgridError.message}`,
+              error_type: sendgridError.name,
+              recipients_list: to,
+              subject: processedSubject,
+              variables_processed: subject !== processedSubject || html !== processedHtml
+            },
+            ip_address: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '127.0.0.1'
+          }])
+        
+        if (logError) {
+          console.error('⚠️ Failed to save connection error log:', logError)
+        } else {
+          console.log('✅ Connection error log saved to database')
+        }
+      } catch (logSaveError) {
+        console.error('⚠️ Error saving connection error log:', logSaveError)
+      }
+      
       return new Response(
         JSON.stringify({ 
           error: 'Falha na conexão com SendGrid',
@@ -263,6 +350,40 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('💥 Critical error:', error)
+    
+    // Try to save critical error log (if supabase client is available)
+    try {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')
+      const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+      
+      if (supabaseUrl && supabaseServiceRoleKey) {
+        const supabase = createClient(supabaseUrl, supabaseServiceRoleKey)
+        
+        const { error: logError } = await supabase
+          .from('logs')
+          .insert([{
+            user_id: '00000000-0000-0000-0000-000000000000', // UUID padrão para Edge Function
+            action: 'envio_direto',
+            status: 'erro',
+            details: {
+              error_message: `Erro crítico: ${error.message}`,
+              error_type: error.name,
+              stack_trace: error.stack,
+              recipients_list: body?.to || 'unknown'
+            },
+            ip_address: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '127.0.0.1'
+          }])
+        
+        if (logError) {
+          console.error('⚠️ Failed to save critical error log:', logError)
+        } else {
+          console.log('✅ Critical error log saved to database')
+        }
+      }
+    } catch (logSaveError) {
+      console.error('⚠️ Error saving critical error log:', logSaveError)
+    }
+    
     return new Response(
       JSON.stringify({ 
         error: 'Erro interno da função',
