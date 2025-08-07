@@ -1,5 +1,4 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -13,27 +12,36 @@ serve(async (req) => {
   }
 
   try {
-    console.log('🚀 send-email function called')
-
-    // Initialize Supabase client
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
+    console.log('🚀 send-email function started')
 
     // Parse the request body
-    const requestBody = await req.json()
-    console.log('📥 Request body:', requestBody)
+    let requestBody
+    try {
+      requestBody = await req.json()
+      console.log('📥 Request body received:', requestBody)
+    } catch (parseError) {
+      console.error('❌ Failed to parse request body:', parseError)
+      return new Response(
+        JSON.stringify({ 
+          error: 'Invalid JSON in request body',
+          details: parseError.message
+        }),
+        { 
+          status: 400, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      )
+    }
 
-    const { to, subject, html, type = 'direct' } = requestBody
+    const { to, subject, html } = requestBody
 
-    // Validation
+    // Basic validation
     if (!to || !subject || !html) {
       console.error('❌ Missing required fields:', { to: !!to, subject: !!subject, html: !!html })
       return new Response(
         JSON.stringify({ 
           error: 'Campos obrigatórios ausentes', 
-          details: 'Email destinatário, assunto e conteúdo são obrigatórios' 
+          details: `Faltam campos: ${!to ? 'email, ' : ''}${!subject ? 'assunto, ' : ''}${!html ? 'conteúdo' : ''}`.replace(/, $/, '')
         }),
         { 
           status: 400, 
@@ -49,7 +57,7 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({ 
           error: 'Email inválido', 
-          details: 'Formato do email destinatário é inválido' 
+          details: 'O formato do email destinatário está incorreto'
         }),
         { 
           status: 400, 
@@ -58,10 +66,10 @@ serve(async (req) => {
       )
     }
 
-    // Get SendGrid API key from environment
+    // Get SendGrid API key
     const sendgridApiKey = Deno.env.get('SENDGRID_API_KEY')
     if (!sendgridApiKey) {
-      console.error('❌ SendGrid API key not configured')
+      console.error('❌ SendGrid API key not found in environment')
       return new Response(
         JSON.stringify({ 
           error: 'Configuração inválida', 
@@ -74,24 +82,66 @@ serve(async (req) => {
       )
     }
 
-    console.log('🔑 SendGrid API key found:', sendgridApiKey.substring(0, 10) + '...')
+    console.log('🔑 SendGrid API key found, length:', sendgridApiKey.length)
 
-    // Use verified SendGrid sender email (sandbox mode compatible)
-    const fromEmail = 'test@example.com'  // SendGrid sandbox email - always works
+    // Test SendGrid API key first with a simple request
+    console.log('🧪 Testing SendGrid API connection...')
     
-    // Prepare SendGrid payload
+    try {
+      const testResponse = await fetch('https://api.sendgrid.com/v3/user/account', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${sendgridApiKey}`,
+          'Content-Type': 'application/json',
+        }
+      })
+      
+      console.log('🧪 SendGrid test response status:', testResponse.status)
+      
+      if (!testResponse.ok) {
+        const testError = await testResponse.text()
+        console.error('❌ SendGrid API key test failed:', testError)
+        return new Response(
+          JSON.stringify({ 
+            error: 'SendGrid API key inválida',
+            details: 'A chave de API do SendGrid não está funcionando. Verifique se está configurada corretamente.',
+            sendgridStatus: testResponse.status
+          }),
+          { 
+            status: 500, 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          }
+        )
+      }
+      
+      console.log('✅ SendGrid API key is valid')
+      
+    } catch (testError) {
+      console.error('❌ Failed to test SendGrid API:', testError)
+      return new Response(
+        JSON.stringify({ 
+          error: 'Falha na conexão com SendGrid',
+          details: 'Não foi possível conectar ao serviço de email. Tente novamente.',
+          errorType: testError.name,
+          errorMessage: testError.message
+        }),
+        { 
+          status: 500, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      )
+    }
+
+    // Prepare SendGrid email payload
     const sendgridPayload = {
       personalizations: [
         {
-          to: [{ 
-            email: to,
-            name: to.split('@')[0] // Use email prefix as name
-          }],
+          to: [{ email: to }],
           subject: subject
         }
       ],
       from: {
-        email: fromEmail,
+        email: 'test@example.com',  // SendGrid sandbox email
         name: 'Sistema de Emails'
       },
       content: [
@@ -99,27 +149,17 @@ serve(async (req) => {
           type: 'text/html',
           value: html
         }
-      ],
-      tracking_settings: {
-        click_tracking: { enable: true },
-        open_tracking: { enable: true }
-      },
-      mail_settings: {
-        sandbox_mode: {
-          enable: false  // Disable sandbox for production
-        }
-      }
+      ]
     }
 
-    console.log('📨 SendGrid payload prepared:', {
-      from: fromEmail,
+    console.log('📨 Sending email with payload:', {
       to: to,
       subject: subject,
+      from: 'test@example.com',
       contentLength: html.length
     })
 
     // Send email via SendGrid
-    console.log('📡 Sending to SendGrid API...')
     const sendgridResponse = await fetch('https://api.sendgrid.com/v3/mail/send', {
       method: 'POST',
       headers: {
@@ -130,36 +170,21 @@ serve(async (req) => {
     })
 
     console.log('📬 SendGrid response status:', sendgridResponse.status)
-    console.log('📬 SendGrid response headers:', Object.fromEntries(sendgridResponse.headers.entries()))
 
     if (!sendgridResponse.ok) {
       const errorText = await sendgridResponse.text()
-      console.error('❌ SendGrid Error Details:', {
+      console.error('❌ SendGrid send error:', {
         status: sendgridResponse.status,
         statusText: sendgridResponse.statusText,
         body: errorText
       })
 
-      // Parse SendGrid error for better user message
-      let userMessage = 'Erro no serviço de email'
-      try {
-        const errorData = JSON.parse(errorText)
-        if (errorData.errors && errorData.errors.length > 0) {
-          const firstError = errorData.errors[0]
-          if (firstError.message) {
-            userMessage = firstError.message
-          }
-        }
-      } catch (e) {
-        console.error('Failed to parse SendGrid error:', e)
-      }
-      
       return new Response(
         JSON.stringify({ 
           error: 'Falha no envio do email',
-          details: userMessage,
-          sendgridError: errorText,
-          status: sendgridResponse.status
+          details: 'O serviço de email retornou um erro. Tente novamente em alguns minutos.',
+          sendgridStatus: sendgridResponse.status,
+          sendgridError: errorText
         }),
         { 
           status: 500, 
@@ -168,41 +193,16 @@ serve(async (req) => {
       )
     }
 
-    // Get SendGrid message ID from response headers
+    // Success
     const messageId = sendgridResponse.headers.get('x-message-id') || 'unknown'
     console.log('✅ Email sent successfully, Message ID:', messageId)
-
-    // Log the email in Supabase (optional, don't fail if this fails)
-    try {
-      const { error: logError } = await supabaseClient
-        .from('email_logs')
-        .insert({
-          user_id: null, // No user authentication required
-          to_email: to,
-          subject: subject,
-          html_content: html,
-          status: 'sent',
-          sendgrid_message_id: messageId,
-          type: type,
-          created_at: new Date().toISOString()
-        })
-
-      if (logError) {
-        console.error('⚠️ Failed to log email (non-critical):', logError)
-      } else {
-        console.log('✅ Email logged successfully')
-      }
-    } catch (logException) {
-      console.error('⚠️ Exception logging email (non-critical):', logException)
-    }
 
     return new Response(
       JSON.stringify({ 
         success: true, 
-        message: 'Email enviado com sucesso!',
+        message: `Email enviado com sucesso para ${to}!`,
         messageId: messageId,
-        to: to,
-        subject: subject
+        timestamp: new Date().toISOString()
       }),
       { 
         status: 200, 
@@ -212,12 +212,14 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('💥 Critical error in send-email function:', error)
+    console.error('💥 Error stack:', error.stack)
     
     return new Response(
       JSON.stringify({ 
         error: 'Erro interno do servidor',
-        details: error.message || 'Erro desconhecido no envio de email',
-        stack: error.stack || 'No stack trace available'
+        details: error.message || 'Erro desconhecido no processamento do email',
+        errorType: error.name || 'UnknownError',
+        timestamp: new Date().toISOString()
       }),
       { 
         status: 500, 
