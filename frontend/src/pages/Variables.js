@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
+import { logVariableAction } from '../lib/logger'
 import '../styles/dashboard.css'
 
 const Variables = () => {
@@ -103,6 +104,9 @@ const Variables = () => {
         
         if (error) throw error
         toast.success('Variável atualizada com sucesso!')
+        
+        // Log da atualização
+        await logVariableAction.update(editingVariable.id, variableData, true)
       } else {
         const { error } = await supabase
           .from('custom_variables')
@@ -110,6 +114,9 @@ const Variables = () => {
         
         if (error) throw error
         toast.success('Variável criada com sucesso!')
+        
+        // Log da criação
+        await logVariableAction.create(variableData, true)
       }
 
       setShowVariableModal(false)
@@ -119,6 +126,13 @@ const Variables = () => {
     } catch (error) {
       console.error('Erro ao salvar variável:', error)
       toast.error(error.message || 'Erro ao salvar variável')
+      
+      // Log do erro
+      if (editingVariable) {
+        await logVariableAction.update(editingVariable.id, variableData, false, error)
+      } else {
+        await logVariableAction.create(variableData, false, error)
+      }
     }
   }
 
@@ -148,10 +162,17 @@ const Variables = () => {
       
       if (error) throw error
       toast.success('Variável excluída com sucesso!')
+      
+      // Log da exclusão
+      await logVariableAction.delete(variableId, variableName, true)
+      
       fetchData()
     } catch (error) {
       console.error('Erro ao excluir variável:', error)
       toast.error(error.response?.data?.error || 'Erro ao excluir variável')
+      
+      // Log do erro
+      await logVariableAction.delete(variableId, variableName, false, error)
     }
   }
 

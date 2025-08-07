@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import SimpleVariableEditor from '../components/SimpleVariableEditor'
+import { logTemplateAction } from '../lib/logger'
 import '../styles/dashboard.css'
 
 const Templates = () => {
@@ -307,6 +308,9 @@ const Templates = () => {
         
         if (error) throw error
         toast.success('Template atualizado com sucesso!')
+        
+        // Log da atualização
+        await logTemplateAction.update(editingTemplate.id, formData, true)
       } else {
         const { error } = await supabase
           .from('templates')
@@ -314,6 +318,13 @@ const Templates = () => {
         
         if (error) throw error
         toast.success('Template criado com sucesso!')
+        
+        // Log da criação
+        await logTemplateAction.create({
+          nome: formData.nome,
+          html_content: formData.html,
+          variaveis: {}
+        }, true)
       }
 
       setShowModal(false)
@@ -323,6 +334,17 @@ const Templates = () => {
     } catch (error) {
       console.error('Erro ao salvar template:', error)
       toast.error(error.message || 'Erro ao salvar template')
+      
+      // Log do erro
+      if (editingTemplate) {
+        await logTemplateAction.update(editingTemplate.id, formData, false, error)
+      } else {
+        await logTemplateAction.create({
+          nome: formData.nome,
+          html_content: formData.html,
+          variaveis: {}
+        }, false, error)
+      }
     }
   }
 
@@ -350,10 +372,17 @@ const Templates = () => {
       
       if (error) throw error
       toast.success('Template excluído com sucesso!')
+      
+      // Log da exclusão
+      await logTemplateAction.delete(templateId, templateName, true)
+      
       fetchTemplates()
     } catch (error) {
       console.error('Erro ao excluir template:', error)
       toast.error(error.message || 'Erro ao excluir template')
+      
+      // Log do erro
+      await logTemplateAction.delete(templateId, templateName, false, error)
     }
   }
 

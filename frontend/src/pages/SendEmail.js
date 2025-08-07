@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import SimpleVariableEditor from '../components/SimpleVariableEditor'
+import { logSuccess, logError } from '../lib/logger'
 import '../styles/dashboard.css'
 
 const SendEmail = () => {
@@ -252,6 +253,21 @@ const SendEmail = () => {
       console.log('✅ Email sent successfully:', data)
       toast.success(`Email enviado com sucesso para ${emailData.to}!`)
       
+      // Log da ação de sucesso
+      await logSuccess('envio_direto_frontend', {
+        recipients_count: 1,
+        recipients_list: emailData.to,
+        subject: emailData.subject,
+        content_length: emailData.html.length,
+        has_template: !!emailData.templateId,
+        template_id: emailData.templateId || null,
+        has_variables: emailData.subject.includes('{{') || emailData.html.includes('{{'),
+        contact_selected: !!selectedContactInfo,
+        contact_name: selectedContactInfo?.nome || null,
+        message_id: data?.messageId || 'unknown',
+        sendgrid_status: data?.sendgridStatus || null
+      })
+      
       // Limpar formulário
       setEmailData({
         to: '',
@@ -292,6 +308,18 @@ const SendEmail = () => {
       }
       
       toast.error(`❌ ${errorMessage}`)
+      
+      // Log da ação de erro
+      await logError('envio_direto_frontend', error, {
+        recipients_list: emailData.to,
+        subject: emailData.subject,
+        content_length: emailData.html.length,
+        has_template: !!emailData.templateId,
+        template_id: emailData.templateId || null,
+        contact_selected: !!selectedContactInfo,
+        user_error_message: errorMessage,
+        original_error: error?.message || error
+      })
     } finally {
       setLoading(false)
     }
