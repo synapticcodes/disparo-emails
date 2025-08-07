@@ -104,7 +104,7 @@ export const emails = {
       throw new Error('User not authenticated');
     }
 
-    const response = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/send-email`, {
+    const response = await fetch(`https://ixroiuhpvsljxeynfrqz.supabase.co/functions/v1/send-email`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${session.access_token}`,
@@ -133,7 +133,7 @@ export const emails = {
       throw new Error('User not authenticated');
     }
 
-    const response = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/send-campaign`, {
+    const response = await fetch(`https://ixroiuhpvsljxeynfrqz.supabase.co/functions/v1/send-campaign`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${session.access_token}`,
