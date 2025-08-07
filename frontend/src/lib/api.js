@@ -561,8 +561,10 @@ export const tags = {
     const { data, error } = await supabase
       .from('tags')
       .insert({
-        nome: tagData.nome,
-        cor: tagData.cor,
+        nome: tagData.name || tagData.nome,
+        color: tagData.color || tagData.cor,
+        icon: tagData.icon,
+        description: tagData.description,
         created_at: new Date().toISOString()
       })
       .select()
@@ -574,8 +576,10 @@ export const tags = {
     const { data, error } = await supabase
       .from('tags')
       .update({
-        nome: tagData.nome,
-        cor: tagData.cor,
+        nome: tagData.name || tagData.nome,
+        color: tagData.color || tagData.cor,
+        icon: tagData.icon,
+        description: tagData.description,
         updated_at: new Date().toISOString()
       })
       .eq('id', id)
