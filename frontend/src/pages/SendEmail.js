@@ -44,8 +44,45 @@ const SendEmail = () => {
       
       setTemplatesList(templatesData || [])
       setContactsList(contactsData || [])
-      setVariables(variablesData || [])
-      console.log('Dados carregados do Supabase:', { templatesData, contactsData, variablesData })
+      
+      // Adicionar variáveis universais ao início da lista
+      const universalVariables = [
+        {
+          id: 'universal-nome',
+          name: '{{nome}}',
+          display_name: 'Nome (primeiro nome)',
+          description: 'Primeiro nome do contato',
+          data_type: 'text',
+          is_universal: true
+        },
+        {
+          id: 'universal-nome-completo',
+          name: '{{nome_completo}}',
+          display_name: 'Nome Completo',
+          description: 'Nome completo do contato',
+          data_type: 'text',
+          is_universal: true
+        },
+        {
+          id: 'universal-email',
+          name: '{{email}}',
+          display_name: 'Email',
+          description: 'Email do contato',
+          data_type: 'email',
+          is_universal: true
+        }
+      ]
+      
+      // Combinar variáveis universais com customizadas
+      const allVariables = [...universalVariables, ...(variablesData || [])]
+      setVariables(allVariables)
+      
+      console.log('Dados carregados do Supabase:', { 
+        templatesData, 
+        contactsData, 
+        customVariables: variablesData?.length || 0,
+        totalVariables: allVariables.length
+      })
       
     } catch (error) {
       console.error('Erro ao carregar dados:', error)

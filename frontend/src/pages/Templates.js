@@ -48,8 +48,46 @@ const Templates = () => {
       if (datasetsError) console.error('Erro datasets:', datasetsError)
       
       setTemplates(templatesData || [])
-      setVariables(variablesData || [])
+      
+      // Adicionar variáveis universais ao início da lista
+      const universalVariables = [
+        {
+          id: 'universal-nome',
+          name: '{{nome}}',
+          display_name: 'Nome (primeiro nome)',
+          description: 'Primeiro nome do contato',
+          data_type: 'text',
+          is_universal: true
+        },
+        {
+          id: 'universal-nome-completo',
+          name: '{{nome_completo}}',
+          display_name: 'Nome Completo',
+          description: 'Nome completo do contato',
+          data_type: 'text',
+          is_universal: true
+        },
+        {
+          id: 'universal-email',
+          name: '{{email}}',
+          display_name: 'Email',
+          description: 'Email do contato',
+          data_type: 'email',
+          is_universal: true
+        }
+      ]
+      
+      // Combinar variáveis universais com customizadas
+      const allVariables = [...universalVariables, ...(variablesData || [])]
+      setVariables(allVariables)
       setDatasets(datasetsData || [])
+      
+      console.log('Dados carregados do Supabase:', { 
+        templatesData: templatesData?.length || 0, 
+        customVariables: variablesData?.length || 0,
+        totalVariables: allVariables.length,
+        datasetsData: datasetsData?.length || 0
+      })
       
     } catch (error) {
       console.error('Erro ao carregar dados:', error)
@@ -111,6 +149,7 @@ const Templates = () => {
       // Para preview, usar placeholders visuais
       processedTemplate = processedTemplate.replace(/\{\{nome\}\}/g, '[João]')
       processedTemplate = processedTemplate.replace(/\{\{nome_completo\}\}/g, '[João Silva Santos]')
+      processedTemplate = processedTemplate.replace(/\{\{email\}\}/g, '[joao.silva@exemplo.com]')
 
       // 2. Datasets temporariamente não implementados
       if (datasetId) {
@@ -779,6 +818,7 @@ Use variáveis como {{nome}}, {{nome_completo}}, {{empresa}} etc."
                                      variable.data_type === 'currency' ? '💰' : 
                                      variable.data_type === 'date' ? '📅' : 
                                      variable.data_type === 'url' ? '🔗' : '📝'}
+                                    {variable.is_universal && ' 🌟'}
                                   </div>
                                 </div>
                               </div>

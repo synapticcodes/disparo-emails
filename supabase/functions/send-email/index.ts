@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -71,12 +72,96 @@ serve(async (req) => {
 
     console.log('🔑 SendGrid API key found, length:', sendgridApiKey.length)
 
+    // Initialize Supabase client for fetching contact data
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')
+    const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    
+    if (!supabaseUrl || !supabaseServiceRoleKey) {
+      console.error('❌ Supabase configuration missing')
+      return new Response(
+        JSON.stringify({ 
+          error: 'Configuração do banco de dados não encontrada',
+          details: 'Configuração do Supabase não encontrada'
+        }),
+        { 
+          status: 500, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      )
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseServiceRoleKey)
+
+    // Process universal variables by fetching contact data
+    let processedSubject = subject
+    let processedHtml = html
+
+    console.log('🔍 Looking for contact with email:', to)
+    
+    try {
+      const { data: contact, error: contactError } = await supabase
+        .from('contatos')
+        .select('nome, email')
+        .eq('email', to)
+        .single()
+
+      if (contactError) {
+        console.log('ℹ️ Contact not found in database, using fallback values:', contactError.message)
+        
+        // Use fallback values for universal variables
+        processedSubject = processedSubject.replace(/\{\{nome\}\}/g, 'Cliente')
+        processedSubject = processedSubject.replace(/\{\{nome_completo\}\}/g, 'Cliente')
+        processedSubject = processedSubject.replace(/\{\{email\}\}/g, to)
+        
+        processedHtml = processedHtml.replace(/\{\{nome\}\}/g, 'Cliente')
+        processedHtml = processedHtml.replace(/\{\{nome_completo\}\}/g, 'Cliente')
+        processedHtml = processedHtml.replace(/\{\{email\}\}/g, to)
+      } else {
+        console.log('✅ Contact found:', contact)
+        
+        // Extract first name from full name
+        const firstName = contact.nome ? contact.nome.split(' ')[0] : 'Cliente'
+        const fullName = contact.nome || 'Cliente'
+        
+        console.log('📝 Replacing variables:', {
+          firstName,
+          fullName,
+          email: contact.email
+        })
+        
+        // Replace universal variables with actual contact data
+        processedSubject = processedSubject.replace(/\{\{nome\}\}/g, firstName)
+        processedSubject = processedSubject.replace(/\{\{nome_completo\}\}/g, fullName)
+        processedSubject = processedSubject.replace(/\{\{email\}\}/g, contact.email)
+        
+        processedHtml = processedHtml.replace(/\{\{nome\}\}/g, firstName)
+        processedHtml = processedHtml.replace(/\{\{nome_completo\}\}/g, fullName)
+        processedHtml = processedHtml.replace(/\{\{email\}\}/g, contact.email)
+      }
+    } catch (dbError) {
+      console.error('⚠️ Database error when fetching contact:', dbError)
+      
+      // Use fallback values if database fails
+      processedSubject = processedSubject.replace(/\{\{nome\}\}/g, 'Cliente')
+      processedSubject = processedSubject.replace(/\{\{nome_completo\}\}/g, 'Cliente')
+      processedSubject = processedSubject.replace(/\{\{email\}\}/g, to)
+      
+      processedHtml = processedHtml.replace(/\{\{nome\}\}/g, 'Cliente')
+      processedHtml = processedHtml.replace(/\{\{nome_completo\}\}/g, 'Cliente')
+      processedHtml = processedHtml.replace(/\{\{email\}\}/g, to)
+    }
+
+    console.log('🎯 Final processed content:', {
+      subject: processedSubject,
+      htmlLength: processedHtml.length
+    })
+
     // Prepare SendGrid payload
     const sendgridPayload = {
       personalizations: [
         {
           to: [{ email: to }],
-          subject: subject
+          subject: processedSubject
         }
       ],
       from: {
@@ -86,7 +171,7 @@ serve(async (req) => {
       content: [
         {
           type: 'text/html',
-          value: html
+          value: processedHtml
         }
       ],
       mail_settings: {
@@ -98,9 +183,10 @@ serve(async (req) => {
 
     console.log('📨 Sending to SendGrid:', {
       to: to,
-      subject: subject,
+      subject: processedSubject,
       from: 'avisos@lembretescredilly.com',
-      apiKeyLength: sendgridApiKey.length
+      apiKeyLength: sendgridApiKey.length,
+      variablesProcessed: subject !== processedSubject || html !== processedHtml
     })
 
     // Send to SendGrid
