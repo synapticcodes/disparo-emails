@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
 
@@ -55,12 +54,6 @@ const Suppressions = () => {
     }
 
     try {
-      // O servidor espera 'type' em vez de 'reason'
-      const payload = {
-        email: formData.email,
-        type: formData.reason,
-        reason: 'Adicionado manualmente'
-      }
       toast.info('Funcionalidade temporariamente indisponível')
       toast.success('Email adicionado à lista de supressão!')
       

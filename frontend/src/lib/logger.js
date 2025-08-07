@@ -261,7 +261,7 @@ export const logBulkAction = {
       : logError('bulk_remove_tag_contatos', error, { contacts_count: contactIds.length })
 }
 
-export default {
+const logger = {
   logAction,
   logSuccess,
   logError,
@@ -272,3 +272,5 @@ export default {
   logCampaignAction,
   logBulkAction
 }
+
+export default logger

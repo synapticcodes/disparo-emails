@@ -129,9 +129,9 @@ const Variables = () => {
       
       // Log do erro
       if (editingVariable) {
-        await logVariableAction.update(editingVariable.id, variableData, false, error)
+        await logVariableAction.update(editingVariable.id, variableForm, false, error)
       } else {
-        await logVariableAction.create(variableData, false, error)
+        await logVariableAction.create(variableForm, false, error)
       }
     }
   }

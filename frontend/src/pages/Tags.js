@@ -170,9 +170,6 @@ const Tags = () => {
       return
     }
 
-    const selectedTag = tags.find(tag => tag.name === selectedTagForRemoval)
-    const tagName = selectedTag ? selectedTag.name : selectedTagForRemoval
-
     // Temporary: Bulk operations not implemented yet
     toast.info('Função de remoção de tag em lote temporariamente indisponível')
     setShowBulkRemoveModal(false)

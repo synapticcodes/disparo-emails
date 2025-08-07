@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement, LineElement, PointElement } from 'chart.js'
 import { Bar, Doughnut, Line } from 'react-chartjs-2'
-import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
 
@@ -19,10 +18,6 @@ const Statistics = () => {
   const fetchStatistics = async () => {
     try {
       setLoading(true)
-      // Converter período para número de dias
-      const periodDays = timeRange === '24h' ? 1 : 
-                        timeRange === '7d' ? 7 : 
-                        timeRange === '30d' ? 30 : 90
       // Redirect to Dashboard for statistics
       toast.info('Estatísticas detalhadas disponíveis na página Dashboard')
       setStats({
