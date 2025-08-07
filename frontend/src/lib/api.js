@@ -6,6 +6,7 @@ console.log('🔧 Modo: Supabase apenas (sem API backend)')
 
 // Criar instância do axios para chamadas externas (se necessário)
 const api = axios.create({
+  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:3000',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -368,22 +369,26 @@ export const contacts = {
     return { data: { success: true } };
   },
   bulkTag: async (data) => {
-    // Implementar bulk tag usando batch operations
-    const { contactIds, tagIds } = data;
-    const insertData = [];
-    
-    contactIds.forEach(contactId => {
-      tagIds.forEach(tagId => {
-        insertData.push({ contato_id: contactId, tag_id: tagId });
+    try {
+      const response = await api.post('/api/contacts/bulk-tag', {
+        contact_ids: data.contactIds,
+        tag_id: data.tagId
       });
-    });
-    
-    const { data: result, error } = await supabase
-      .from('contato_tags')
-      .insert(insertData)
-      .select();
-    if (error) throw error;
-    return { data: result };
+      return { data: response.data };
+    } catch (error) {
+      throw new Error(error.response?.data?.error || 'Erro ao aplicar tags em massa');
+    }
+  },
+  bulkRemoveTag: async (data) => {
+    try {
+      const response = await api.post('/api/contacts/bulk-remove-tag', {
+        contact_ids: data.contactIds,
+        tag_name: data.tagName
+      });
+      return { data: response.data };
+    } catch (error) {
+      throw new Error(error.response?.data?.error || 'Erro ao remover tags em massa');
+    }
   },
 }
 
