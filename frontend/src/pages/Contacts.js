@@ -84,8 +84,13 @@ const Contacts = () => {
         description: `Criado via contatos`
       }
 
-      const response = await tags.create(newTag)
-      const createdTag = response.data.data || response.data
+      const { data: createdTag, error } = await supabase
+        .from('tags')
+        .insert([newTag])
+        .select()
+        .single()
+
+      if (error) throw error
 
       // Adicionar nova tag à lista
       setAvailableTags(prev => [...prev, createdTag])

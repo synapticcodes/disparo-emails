@@ -45,12 +45,9 @@ const Schedules = () => {
       // Por enquanto, agendamentos não implementados
       setSchedules([])
       setCampaigns(campaignsData || [])
+      setTags(tagsData || [])
       
       toast.info('Funcionalidade de agendamento temporariamente indisponível')
-      
-      // O endpoint /api/tags retorna { success: true, data: [...] }
-      const tagsData = tagsRes.data.data || tagsRes.data || []
-      setTags(Array.isArray(tagsData) ? tagsData : [])
     } catch (error) {
       console.error('Erro ao carregar dados:', error)
       toast.error('Erro ao carregar dados')

@@ -112,21 +112,10 @@ const Templates = () => {
       processedTemplate = processedTemplate.replace(/\{\{nome\}\}/g, '[João]')
       processedTemplate = processedTemplate.replace(/\{\{nome_completo\}\}/g, '[João Silva Santos]')
 
-      // 2. Depois processar variáveis customizadas do CSV (se houver dataset)
+      // 2. Datasets temporariamente não implementados
       if (datasetId) {
-        const response = await datasetsApi.getValues(datasetId, { page: 1, limit: 50 })
-        const rows = response.data.data.rows || []
-        
-        if (rows.length > 0 && rows[rowIndex]) {
-          const rowData = rows[rowIndex].variables || {}
-
-          // Substituir cada variável customizada encontrada
-          Object.keys(rowData).forEach(variableName => {
-            const value = rowData[variableName].value || ''
-            const regex = new RegExp(variableName.replace(/[{}]/g, '\\\\$&'), 'g')
-            processedTemplate = processedTemplate.replace(regex, value)
-          })
-        }
+        // Placeholder para quando datasets forem implementados
+        console.log('Dataset preview não implementado ainda:', datasetId)
       }
 
       return processedTemplate
