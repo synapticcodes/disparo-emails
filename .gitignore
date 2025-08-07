@@ -10,4 +10,4 @@ frontend/node_modules
 *.png
 *.md
 *.sql
-*.html
+*.htmlfrontend/.env.production
