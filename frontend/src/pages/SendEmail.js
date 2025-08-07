@@ -35,7 +35,7 @@ const SendEmail = () => {
       ] = await Promise.all([
         supabase.from('templates').select('*'),
         supabase.from('contatos').select('*'),
-        supabase.from('variaveis_customizadas').select('*')
+        supabase.from('custom_variables').select('*')
       ])
       
       if (templatesError) console.error('Erro templates:', templatesError)

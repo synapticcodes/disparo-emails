@@ -39,7 +39,7 @@ const Templates = () => {
         { data: datasetsData, error: datasetsError }
       ] = await Promise.all([
         supabase.from('templates').select('*'),
-        supabase.from('variaveis_customizadas').select('*'),
+        supabase.from('custom_variables').select('*'),
         supabase.from('datasets').select('*')
       ])
       

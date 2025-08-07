@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { variables as variablesApi, datasets as datasetsApi } from '../lib/api'
+import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
 
@@ -50,32 +50,25 @@ const Variables = () => {
     try {
       setLoading(true)
       
-      // Carregar variáveis
-      console.log('Carregando variáveis...')
-      let variablesData = []
-      try {
-        const variablesRes = await variablesApi.list()
-        variablesData = variablesRes.data.data || []
-        console.log('Variáveis carregadas:', variablesData.length)
-      } catch (variablesError) {
-        console.error('Erro ao carregar variáveis:', variablesError)
-        toast.error(`Erro ao carregar variáveis: ${variablesError.response?.data?.error || variablesError.message}`)
-      }
+      // Buscar dados diretamente do Supabase
+      const [
+        { data: variablesData, error: variablesError },
+        { data: datasetsData, error: datasetsError }
+      ] = await Promise.all([
+        supabase.from('custom_variables').select('*'),
+        supabase.from('datasets').select('*')
+      ])
       
-      // Carregar datasets
-      console.log('Carregando datasets...')
-      let datasetsData = []
-      try {
-        const datasetsRes = await datasetsApi.list()
-        datasetsData = datasetsRes.data.data || []
-        console.log('Datasets carregados:', datasetsData.length)
-      } catch (datasetsError) {
-        console.error('Erro ao carregar datasets:', datasetsError)
-        toast.error(`Erro ao carregar datasets: ${datasetsError.response?.data?.error || datasetsError.message}`)
-      }
+      if (variablesError) console.error('Erro variáveis:', variablesError)
+      if (datasetsError) console.error('Erro datasets:', datasetsError)
       
-      setVariables(variablesData)
-      setDatasets(datasetsData)
+      setVariables(variablesData || [])
+      setDatasets(datasetsData || [])
+      
+      console.log('Dados carregados do Supabase:', {
+        variables: variablesData?.length || 0,
+        datasets: datasetsData?.length || 0
+      })
       
     } catch (error) {
       console.error('Erro geral ao carregar dados:', error)
@@ -96,11 +89,26 @@ const Variables = () => {
     }
 
     try {
+      // Preparar dados da variável
+      const variableData = {
+        ...variableForm,
+        name: variableForm.name.startsWith('{{') ? variableForm.name : `{{${variableForm.name}}}`
+      }
+      
       if (editingVariable) {
-        await variablesApi.update(editingVariable.id, variableForm)
+        const { error } = await supabase
+          .from('custom_variables')
+          .update(variableData)
+          .eq('id', editingVariable.id)
+        
+        if (error) throw error
         toast.success('Variável atualizada com sucesso!')
       } else {
-        await variablesApi.create(variableForm)
+        const { error } = await supabase
+          .from('custom_variables')
+          .insert([variableData])
+        
+        if (error) throw error
         toast.success('Variável criada com sucesso!')
       }
 
@@ -110,7 +118,7 @@ const Variables = () => {
       fetchData()
     } catch (error) {
       console.error('Erro ao salvar variável:', error)
-      toast.error(error.response?.data?.error || 'Erro ao salvar variável')
+      toast.error(error.message || 'Erro ao salvar variável')
     }
   }
 
@@ -133,7 +141,12 @@ const Variables = () => {
     }
 
     try {
-      await variablesApi.delete(variableId)
+      const { error } = await supabase
+        .from('custom_variables')
+        .delete()
+        .eq('id', variableId)
+      
+      if (error) throw error
       toast.success('Variável excluída com sucesso!')
       fetchData()
     } catch (error) {
@@ -172,10 +185,8 @@ const Variables = () => {
       const formData = new FormData()
       formData.append('csv', uploadForm.file)
 
-      const response = await datasetsApi.preview(formData)
-
-      setCsvPreview(response.data.preview)
-      setUploadStep(2)
+      toast.info('Preview de CSV temporariamente indisponível')
+      return
     } catch (error) {
       console.error('Erro ao fazer preview:', error)
       toast.error(error.response?.data?.error || 'Erro ao fazer preview do CSV')
@@ -202,13 +213,8 @@ const Variables = () => {
       formData.append('description', uploadForm.description)
       formData.append('variable_mapping', JSON.stringify(variableMapping))
 
-      const response = await datasetsApi.upload(formData)
-
-      toast.success(`Dataset criado com sucesso! ${response.data.stats.rows_processed} linhas processadas.`)
-      
-      setShowUploadModal(false)
-      resetUploadForm()
-      fetchData()
+      toast.info('Upload de CSV temporariamente indisponível')
+      return
     } catch (error) {
       console.error('Erro ao fazer upload:', error)
       toast.error(error.response?.data?.error || 'Erro ao fazer upload do CSV')
@@ -221,9 +227,8 @@ const Variables = () => {
     }
 
     try {
-      await datasetsApi.delete(datasetId)
-      toast.success('Dataset excluído com sucesso!')
-      fetchData()
+      toast.info('Exclusão de datasets temporariamente indisponível')
+      return
     } catch (error) {
       console.error('Erro ao excluir dataset:', error)
       toast.error(error.response?.data?.error || 'Erro ao excluir dataset')
