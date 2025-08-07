@@ -188,6 +188,12 @@ const SendEmail = () => {
     try {
       setLoading(true)
       
+      console.log('📤 Enviando email...', {
+        to: emailData.to,
+        subject: emailData.subject,
+        htmlLength: emailData.html.length
+      })
+      
       // Chamar Edge Function diretamente
       const { data, error } = await supabase.functions.invoke('send-email', {
         body: {
@@ -197,9 +203,18 @@ const SendEmail = () => {
         }
       })
       
-      if (error) throw error
+      if (error) {
+        console.error('❌ Error from Edge Function:', error)
+        throw error
+      }
 
-      toast.success('Email enviado com sucesso!')
+      if (data?.error) {
+        console.error('❌ Error in response data:', data)
+        throw new Error(data.details || data.error || 'Erro desconhecido')
+      }
+
+      console.log('✅ Email sent successfully:', data)
+      toast.success(`Email enviado com sucesso para ${emailData.to}!`)
       
       // Limpar formulário
       setEmailData({
@@ -210,8 +225,37 @@ const SendEmail = () => {
       })
       setSelectedContactInfo(null)
     } catch (error) {
-      console.error('Erro ao enviar email:', error)
-      toast.error(error.response?.data?.error || 'Erro ao enviar email')
+      console.error('💥 Erro ao enviar email:', error)
+      
+      // Extrair mensagem de erro específica
+      let errorMessage = 'Erro desconhecido ao enviar email'
+      
+      if (error.message) {
+        errorMessage = error.message
+      } else if (error.details) {
+        errorMessage = error.details
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error
+      } else if (error.response?.data?.details) {
+        errorMessage = error.response.data.details
+      } else if (typeof error === 'string') {
+        errorMessage = error
+      }
+      
+      // Mapear erros comuns para mensagens amigáveis
+      if (errorMessage.includes('Invalid email') || errorMessage.includes('Email inválido')) {
+        errorMessage = 'Email destinatário inválido'
+      } else if (errorMessage.includes('API key') || errorMessage.includes('Configuração inválida')) {
+        errorMessage = 'Configuração do servidor incorreta. Contate o administrador.'
+      } else if (errorMessage.includes('SendGrid') || errorMessage.includes('Falha no envio')) {
+        errorMessage = 'Erro no serviço de email. Tente novamente em alguns minutos.'
+      } else if (errorMessage.includes('network') || errorMessage.includes('fetch') || errorMessage.includes('connection')) {
+        errorMessage = 'Erro de conexão. Verifique sua internet e tente novamente.'
+      } else if (errorMessage.includes('Campos obrigatórios')) {
+        errorMessage = 'Preencha todos os campos obrigatórios'
+      }
+      
+      toast.error(`❌ ${errorMessage}`)
     } finally {
       setLoading(false)
     }
