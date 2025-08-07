@@ -7,6 +7,9 @@ const csv = require('csv-parser');
 const fs = require('fs');
 const path = require('path');
 
+// Sistema temporário para armazenar tags até colunas serem criadas
+const tagsTemporarias = new Map();
+
 const app = express();
 
 // Configurar CORS para permitir requisições do frontend
@@ -1197,10 +1200,212 @@ app.post('/api/suppressions/sync', authMiddleware, async (req, res) => {
 
 // ========== SISTEMA DE AGENDAMENTO ==========
 
+// TESTE: Listar tags (sem autenticação para teste)
+app.get('/api/test/tags', async (req, res) => {
+  try {
+    const testUserId = '2ce3ae60-3656-411d-81b6-50a4eb62d482';
+    
+    const { data: tags, error } = await supabase
+      .from('tags')
+      .select('*')
+      .eq('user_id', testUserId)
+      .order('name');
+    
+    if (error) throw error;
+    
+    console.log(`🧪 TESTE: ${tags?.length || 0} tags encontradas`);
+    tags?.forEach(tag => console.log(`   🏷️ ${tag.name} (${tag.id})`));
+    
+    // Retornar no mesmo formato que o endpoint original
+    res.json({ success: true, data: tags || [] });
+  } catch (error) {
+    console.error('Erro ao buscar tags:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// TESTE: Agendar campanha (sem autenticação para teste)
+app.post('/api/test/campaigns/:id/schedule', async (req, res) => {
+  const { id } = req.params;
+  const { scheduled_at, repeat_interval, repeat_count, timezone, selected_tags } = req.body;
+  
+  try {
+    console.log('🧪 TESTE AGENDAMENTO - Dados recebidos:', { scheduled_at, selected_tags });
+    
+    if (!scheduled_at) {
+      return res.status(400).json({ error: 'Data de agendamento é obrigatória' });
+    }
+
+    const scheduledDate = new Date(scheduled_at);
+    if (scheduledDate <= new Date()) {
+      return res.status(400).json({ error: 'Data deve ser no futuro' });
+    }
+
+    // Usar user_id fixo para teste
+    const testUserId = '2ce3ae60-3656-411d-81b6-50a4eb62d482';
+
+    // Verificar se a campanha existe
+    const { data: campaign, error: campaignError } = await supabase
+      .from('campanhas')
+      .select('*')
+      .eq('id', id)
+      .eq('user_id', testUserId)
+      .single();
+
+    if (campaignError || !campaign) {
+      return res.status(404).json({ error: 'Campanha não encontrada' });
+    }
+
+    // Criar dados do agendamento (APENAS colunas existentes)
+    const scheduleData = {
+      campaign_id: id,
+      scheduled_at: scheduledDate.toISOString(),
+      user_id: testUserId,
+      status: 'agendado'
+    };
+
+    // Log das tags selecionadas (processamento em memória)
+    if (selected_tags && Array.isArray(selected_tags) && selected_tags.length > 0) {
+      console.log(`🧪 TESTE: Tags selecionadas (processamento em memória): ${selected_tags.join(', ')}`);
+      // NÃO adicionar ao scheduleData ainda - colunas não existem
+    }
+
+    // Log de campos opcionais que serão ignorados temporariamente
+    if (repeat_interval) {
+      console.log(`🧪 TESTE: Repetição configurada (ignorado): ${repeat_interval} x${repeat_count || 'infinito'}`);
+    }
+
+    if (timezone) {
+      console.log(`🧪 TESTE: Timezone configurado (ignorado): ${timezone}`);
+    }
+
+    // Inserção simples (apenas colunas existentes)
+    const { data: schedule, error: scheduleError } = await supabase
+      .from('campaign_schedules')
+      .insert(scheduleData)
+      .select()
+      .single();
+
+    if (scheduleError) {
+      console.log('🧪 TESTE: Erro ao inserir agendamento:', scheduleError);
+      throw scheduleError;
+    }
+
+    console.log('🧪 TESTE: Agendamento salvo com sucesso!');
+
+    // Atualizar status da campanha
+    await supabase
+      .from('campanhas')
+      .update({ 
+        status: 'agendada',
+        agendamento: scheduledDate.toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id);
+
+    res.json({
+      success: true,
+      message: 'Agendamento de teste criado com sucesso',
+      schedule: {
+        id: schedule.id,
+        campaign_id: id,
+        scheduled_at: scheduledDate.toISOString(),
+        status: 'agendado',
+        selected_tags: selected_tags || null
+      }
+    });
+
+  } catch (error) {
+    console.error('🧪 TESTE: Erro ao agendar:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// TESTE: Buscar contatos por tags (sem autenticação para teste)
+app.post('/api/test/contacts/by-tags', async (req, res) => {
+  try {
+    const { tags } = req.body;
+    
+    if (!tags || !Array.isArray(tags) || tags.length === 0) {
+      return res.status(400).json({ error: 'Tags são obrigatórias' });
+    }
+
+    console.log(`🧪 TESTE: Buscando contatos por tags: ${tags.join(', ')}`);
+
+    // Usar user_id fixo para teste
+    const testUserId = '2ce3ae60-3656-411d-81b6-50a4eb62d482';
+
+    // Buscar contatos que contenham pelo menos uma das tags selecionadas
+    const { data: contacts, error } = await supabase
+      .from('contatos')
+      .select('id, nome, email, tags')
+      .eq('user_id', testUserId)
+      .not('tags', 'is', null);
+
+    if (error) throw error;
+
+    console.log(`🧪 TESTE: ${contacts?.length || 0} contatos encontrados no total`);
+
+    // Filtrar contatos que têm pelo menos uma das tags selecionadas
+    const filteredContacts = contacts.filter(contact => {
+      if (!contact.tags || !Array.isArray(contact.tags)) return false;
+      return tags.some(tag => contact.tags.includes(tag));
+    });
+
+    console.log(`🧪 TESTE: ${filteredContacts.length} contatos filtrados por tags`);
+
+    res.json({
+      success: true,
+      contacts: filteredContacts,
+      total: filteredContacts.length
+    });
+
+  } catch (error) {
+    console.error('Erro ao buscar contatos por tags:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Buscar contatos por tags
+app.post('/api/contacts/by-tags', authMiddleware, async (req, res) => {
+  try {
+    const { tags } = req.body;
+    
+    if (!tags || !Array.isArray(tags) || tags.length === 0) {
+      return res.status(400).json({ error: 'Tags são obrigatórias' });
+    }
+
+    // Buscar contatos que contenham pelo menos uma das tags selecionadas
+    const { data: contacts, error } = await supabase
+      .from('contatos')
+      .select('id, nome, email, tags')
+      .eq('user_id', req.user.id)
+      .not('tags', 'is', null);
+
+    if (error) throw error;
+
+    // Filtrar contatos que têm pelo menos uma das tags selecionadas
+    const filteredContacts = contacts.filter(contact => {
+      if (!contact.tags || !Array.isArray(contact.tags)) return false;
+      return tags.some(tag => contact.tags.includes(tag));
+    });
+
+    res.json({
+      success: true,
+      contacts: filteredContacts,
+      total: filteredContacts.length
+    });
+
+  } catch (error) {
+    console.error('Erro ao buscar contatos por tags:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Agendar campanha
 app.post('/api/campaigns/:id/schedule', authMiddleware, async (req, res) => {
   const { id } = req.params;
-  const { scheduled_at } = req.body;
+  const { scheduled_at, repeat_interval, repeat_count, timezone, selected_tags } = req.body;
   
   try {
     if (!scheduled_at) {
@@ -1224,18 +1429,60 @@ app.post('/api/campaigns/:id/schedule', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Campanha não encontrada' });
     }
 
-    // Criar agendamento
+    // Criar agendamento (APENAS colunas existentes - versão corrigida)
+    const scheduleData = {
+      campaign_id: id,
+      scheduled_at: scheduledDate.toISOString(),
+      user_id: req.user.id,
+      status: 'agendado'
+    };
+
+    // TEMPORAL: Processar campos extras em memória até colunas serem criadas
+    let tagsParaProcessamento = null;
+    let configsAdicionais = {};
+
+    // Log das tags selecionadas (processamento em memória)
+    if (selected_tags && Array.isArray(selected_tags) && selected_tags.length > 0) {
+      console.log(`📝 TAGS SELECIONADAS (processamento em memória): ${selected_tags.join(', ')}`);
+      tagsParaProcessamento = selected_tags;
+    }
+
+    // Log de campos opcionais que serão processados em memória
+    if (repeat_interval) {
+      console.log(`📝 REPETIÇÃO configurada (processamento em memória): ${repeat_interval} x${repeat_count || 'infinito'}`);
+      configsAdicionais.repeat_interval = repeat_interval;
+      configsAdicionais.repeat_count = repeat_count;
+    }
+
+    if (timezone) {
+      console.log(`📝 TIMEZONE configurado (processamento em memória): ${timezone}`);
+      configsAdicionais.timezone = timezone;
+    }
+
+    // NÃO adicionar campos que não existem na tabela ainda
+    // scheduleData.selected_tags = selected_tags; // ❌ CAUSAVA O ERRO
+    // scheduleData.repeat_interval = repeat_interval; // ❌ CAUSAVA O ERRO  
+    // scheduleData.timezone = timezone; // ❌ CAUSAVA O ERRO
+
+    // Inserção direta (método que funcionou no endpoint de teste)
     const { data: schedule, error: scheduleError } = await supabase
       .from('campaign_schedules')
-      .insert({
-        campaign_id: id,
-        scheduled_at: scheduledDate.toISOString(),
-        user_id: req.user.id
-      })
+      .insert(scheduleData)
       .select()
       .single();
 
-    if (scheduleError) throw scheduleError;
+    if (scheduleError) {
+      console.error('❌ Erro ao inserir agendamento:', scheduleError);
+      throw scheduleError;
+    }
+
+    console.log('✅ Agendamento salvo com sucesso!');
+    
+    // Salvar tags no sistema temporário
+    if (tagsParaProcessamento) {
+      tagsTemporarias.set(schedule.id, tagsParaProcessamento);
+      console.log(`🏷️ Tags salvas temporariamente para agendamento ${schedule.id}: ${tagsParaProcessamento.join(', ')}`);
+    }
 
     // Atualizar status da campanha
     await supabase
@@ -1260,12 +1507,103 @@ app.post('/api/campaigns/:id/schedule', authMiddleware, async (req, res) => {
         id: schedule.id,
         campaign_id: id,
         scheduled_at: scheduledDate.toISOString(),
-        status: 'agendado'
+        status: 'agendado',
+        // Incluir configurações processadas em memória para referência
+        selected_tags: tagsParaProcessamento,
+        configs_adicionais: Object.keys(configsAdicionais).length > 0 ? configsAdicionais : null
       }
     });
 
   } catch (error) {
     await logAction(req.user.id, 'agendar_campanha', 'erro', error.message, req);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Atualizar agendamento
+app.put('/api/campaigns/:id/schedule', authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { scheduled_at, repeat_interval, repeat_count, timezone } = req.body;
+  
+  try {
+    if (!scheduled_at) {
+      return res.status(400).json({ error: 'Data de agendamento é obrigatória' });
+    }
+
+    const scheduledDate = new Date(scheduled_at);
+    if (scheduledDate <= new Date()) {
+      return res.status(400).json({ error: 'Data deve ser no futuro' });
+    }
+
+    // Verificar se o agendamento existe
+    const { data: existingSchedule, error: existingError } = await supabase
+      .from('campaign_schedules')
+      .select('*')
+      .eq('campaign_id', id)
+      .eq('user_id', req.user.id)
+      .eq('status', 'pending')
+      .single();
+
+    if (existingError || !existingSchedule) {
+      return res.status(404).json({ error: 'Agendamento não encontrado' });
+    }
+
+    // Preparar dados de atualização
+    const updateData = {
+      scheduled_at: scheduledDate.toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    // Adicionar campos opcionais de repetição
+    if (repeat_interval) {
+      updateData.repeat_interval = repeat_interval;
+      updateData.repeat_count = repeat_count; // pode ser null para infinito
+    } else {
+      updateData.repeat_interval = null;
+      updateData.repeat_count = null;
+    }
+
+    if (timezone) {
+      updateData.timezone = timezone;
+    }
+
+    // Atualizar agendamento
+    const { data: schedule, error: scheduleError } = await supabase
+      .from('campaign_schedules')
+      .update(updateData)
+      .eq('id', existingSchedule.id)
+      .select()
+      .single();
+
+    if (scheduleError) throw scheduleError;
+
+    // Atualizar status da campanha
+    await supabase
+      .from('campanhas')
+      .update({ 
+        agendamento: scheduledDate.toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id);
+
+    await logAction(req.user.id, 'atualizar_agendamento', 'sucesso', `Agendamento da campanha ${id} atualizado`, req);
+
+    res.json({
+      success: true,
+      message: 'Agendamento atualizado com sucesso',
+      schedule: {
+        id: schedule.id,
+        campaign_id: id,
+        scheduled_at: scheduledDate.toISOString(),
+        repeat_interval: schedule.repeat_interval,
+        repeat_count: schedule.repeat_count,
+        timezone: schedule.timezone,
+        status: 'agendado'
+      }
+    });
+
+  } catch (error) {
+    await logAction(req.user.id, 'atualizar_agendamento', 'erro', error.message, req);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1310,6 +1648,146 @@ app.delete('/api/campaigns/:id/schedule', authMiddleware, async (req, res) => {
   }
 });
 
+// DEBUG: Processar agendamento específico com logs detalhados
+app.post('/api/debug/process-schedule/:id', async (req, res) => {
+  const { id } = req.params;
+  const debugLogs = [];
+  
+  // Função para capturar logs
+  const log = (message) => {
+    console.log(message);
+    debugLogs.push(`${new Date().toISOString()}: ${message}`);
+  };
+  
+  try {
+    log(`=== DEBUG: Processando agendamento ${id} ===`);
+    
+    // Buscar agendamento específico
+    const { data: schedule, error: scheduleError } = await supabase
+      .from('campaign_schedules')
+      .select(`
+        *,
+        campanhas!inner(*)
+      `)
+      .eq('id', id)
+      .single();
+
+    if (scheduleError) {
+      log(`ERRO ao buscar agendamento: ${scheduleError.message}`);
+      return res.json({ success: false, error: scheduleError.message, logs: debugLogs });
+    }
+
+    if (!schedule) {
+      log('Agendamento não encontrado');
+      return res.json({ success: false, error: 'Agendamento não encontrado', logs: debugLogs });
+    }
+
+    log(`Agendamento encontrado: ${schedule.campanhas.nome}`);
+    log(`Status: ${schedule.status}`);
+    log(`Agendado para: ${schedule.scheduled_at}`);
+
+    const campaign = schedule.campanhas;
+    log(`Segmentos da campanha: ${JSON.stringify(campaign.segmentos)}`);
+
+    // Buscar contatos
+    const { data: contacts, error: contactsError } = await supabase
+      .from('contatos')
+      .select('email, nome, id')
+      .in('segmento_id', campaign.segmentos || [])
+      .eq('user_id', campaign.user_id);
+
+    if (contactsError) {
+      log(`ERRO ao buscar contatos: ${contactsError.message}`);
+      return res.json({ success: false, error: contactsError.message, logs: debugLogs });
+    }
+
+    log(`Contatos encontrados: ${contacts?.length || 0}`);
+    
+    if (contacts && contacts.length > 0) {
+      contacts.forEach(c => log(`  - ${c.email} (${c.nome || 'Sem nome'})`));
+
+      // Dividir em batches
+      const contactBatches = chunkArray(contacts, 1000);
+      log(`Dividido em ${contactBatches.length} batch(es)`);
+      
+      for (const batch of contactBatches) {
+        log(`Processando batch de ${batch.length} contatos`);
+        
+        const messages = batch.map(contact => ({
+          to: contact.email,
+          from: campaign.remetente,
+          subject: campaign.assunto,
+          html: substituirVariaveis(campaign.template_html, {
+            nome: contact.nome || contact.email.split('@')[0],
+            email: contact.email
+          }),
+          custom_args: {
+            campaign_id: campaign.id,
+            contact_id: contact.id,
+            user_id: campaign.user_id
+          }
+        }));
+
+        log(`Primeiro email: to=${messages[0].to}, from=${messages[0].from}`);
+        log('Enviando via SendGrid...');
+        
+        try {
+          const sendResult = await sgMail.send(messages);
+          log(`✅ SendGrid respondeu: ${sendResult[0].statusCode}`);
+        } catch (sendError) {
+          log(`❌ ERRO SendGrid: ${sendError.message}`);
+          return res.json({ success: false, error: sendError.message, logs: debugLogs });
+        }
+      }
+      
+      log('Atualizando campanha...');
+      const { error: updateError } = await supabase
+        .from('campanhas')
+        .update({ 
+          status: 'enviada',
+          estatisticas: {
+            sent_at: new Date().toISOString(),
+            total_contacts: contacts.length,
+            scheduled: true
+          }
+        })
+        .eq('id', campaign.id);
+
+      if (updateError) {
+        log(`❌ ERRO ao atualizar campanha: ${updateError.message}`);
+        return res.json({ success: false, error: updateError.message, logs: debugLogs });
+      }
+      
+      log('Marcando agendamento como executado...');
+      await supabase
+        .from('campaign_schedules')
+        .update({ 
+          status: 'executado',
+          executed_at: new Date().toISOString()
+        })
+        .eq('id', id);
+
+      log('✅ PROCESSAMENTO COMPLETO!');
+      
+    } else {
+      log('❌ Nenhum contato encontrado');
+      await supabase
+        .from('campaign_schedules')
+        .update({ 
+          status: 'erro',
+          error_message: 'Nenhum contato encontrado'
+        })
+        .eq('id', id);
+    }
+
+    res.json({ success: true, logs: debugLogs });
+
+  } catch (error) {
+    log(`❌ ERRO GERAL: ${error.message}`);
+    res.json({ success: false, error: error.message, logs: debugLogs });
+  }
+});
+
 // Processar campanhas agendadas (chamado por cron job)
 app.post('/api/cron/process-scheduled', async (req, res) => {
   try {
@@ -1321,7 +1799,7 @@ app.post('/api/cron/process-scheduled', async (req, res) => {
         *,
         campanhas!inner(*)
       `)
-      .eq('status', 'agendado')
+      .in('status', ['agendado', 'pending'])
       .lte('scheduled_at', now);
 
     if (schedulesError) throw schedulesError;
@@ -1340,38 +1818,102 @@ app.post('/api/cron/process-scheduled', async (req, res) => {
         // Executar campanha usando a mesma lógica do endpoint manual
         const campaign = schedule.campanhas;
         
-        // Buscar contatos dos segmentos
-        const { data: contacts } = await supabase
-          .from('contatos')
-          .select('email, nome, id')
-          .in('segmento_id', campaign.segmentos || [])
-          .eq('user_id', campaign.user_id);
+        // Buscar contatos dos segmentos ou por tags
+        console.log(`[AGENDAMENTO] Campanha: ${campaign.nome}`);
+        console.log(`[AGENDAMENTO] Segmentos procurados: ${JSON.stringify(campaign.segmentos)}`);
+        console.log(`[AGENDAMENTO] Tags selecionadas: ${JSON.stringify(schedule.selected_tags)}`);
+        
+        let contacts = [];
+        let contactsError = null;
+
+        // Verificar se há tags selecionadas (na coluna, temporariamente, ou no sistema temp)
+        const selectedTags = schedule.selected_tags || tagsTemporarias.get(schedule.id) || null;
+        
+        if (selectedTags && Array.isArray(selectedTags) && selectedTags.length > 0) {
+          // Buscar contatos por tags
+          console.log(`[AGENDAMENTO] Buscando contatos por tags: ${selectedTags.join(', ')}`);
+          
+          const { data: allContacts, error } = await supabase
+            .from('contatos')
+            .select('email, nome, id, tags')
+            .eq('user_id', campaign.user_id)
+            .not('tags', 'is', null);
+          
+          contactsError = error;
+          
+          if (allContacts) {
+            // Filtrar contatos que têm pelo menos uma das tags selecionadas
+            contacts = allContacts.filter(contact => {
+              if (!contact.tags || !Array.isArray(contact.tags)) return false;
+              return selectedTags.some(tag => contact.tags.includes(tag));
+            });
+          }
+        } else {
+          // Buscar contatos dos segmentos (comportamento original)
+          console.log(`[AGENDAMENTO] Usando segmentos da campanha (sem filtro por tags)`);
+          const result = await supabase
+            .from('contatos')
+            .select('email, nome, id')
+            .in('segmento_id', campaign.segmentos || [])
+            .eq('user_id', campaign.user_id);
+          
+          contacts = result.data;
+          contactsError = result.error;
+        }
+
+        if (contactsError) {
+          throw new Error(`Erro ao buscar contatos: ${contactsError.message}`);
+        }
+
+        console.log(`[AGENDAMENTO] Contatos encontrados: ${contacts?.length || 0}`);
 
         if (contacts && contacts.length > 0) {
           // Dividir contatos em batches
           const contactBatches = chunkArray(contacts, 1000);
           
           for (const batch of contactBatches) {
-            const messages = batch.map(contact => ({
-              to: contact.email,
-              from: campaign.remetente,
-              subject: campaign.assunto,
-              html: substituirVariaveis(campaign.template_html, {
-                nome: contact.nome || contact.email.split('@')[0],
-                email: contact.email
-              }),
-              custom_args: {
-                campaign_id: campaign.id,
-                contact_id: contact.id,
-                user_id: campaign.user_id
+            console.log(`[AGENDAMENTO] Processando batch de ${batch.length} contatos`);
+            
+            const messages = batch.map(contact => {
+              console.log(`[AGENDAMENTO] Preparando email para: ${contact.email}`);
+              return {
+                to: contact.email,
+                from: campaign.remetente,
+                subject: campaign.assunto,
+                html: substituirVariaveis(campaign.template_html, {
+                  nome: contact.nome || contact.email.split('@')[0],
+                  email: contact.email
+                }),
+                custom_args: {
+                  campaign_id: campaign.id,
+                  contact_id: contact.id,
+                  user_id: campaign.user_id
+                }
+              };
+            });
+
+            console.log(`[AGENDAMENTO] Enviando batch via SendGrid...`);
+            console.log(`[AGENDAMENTO] Primeiro email: to=${messages[0].to}, from=${messages[0].from}, subject="${messages[0].subject}"`);
+            
+            try {
+              const sendResult = await sgMail.send(messages);
+              console.log(`[AGENDAMENTO] ✅ SendGrid respondeu: ${sendResult[0].statusCode}`);
+              console.log(`[AGENDAMENTO] ✅ Batch enviado com sucesso!`);
+            } catch (sendError) {
+              console.error(`[AGENDAMENTO] ❌ ERRO no SendGrid:`, sendError.message);
+              console.error(`[AGENDAMENTO] ❌ Código:`, sendError.code);
+              if (sendError.response && sendError.response.body) {
+                console.error(`[AGENDAMENTO] ❌ Detalhes:`, JSON.stringify(sendError.response.body, null, 2));
               }
-            }));
-
-            await sgMail.send(messages);
+              throw sendError; // Re-throw para capturar no catch principal
+            }
           }
+          
+          console.log(`[AGENDAMENTO] Emails enviados para ${contacts.length} contatos`);
 
+          console.log(`[AGENDAMENTO] Atualizando status da campanha...`);
           // Atualizar campanhas
-          await supabase
+          const { error: updateError } = await supabase
             .from('campanhas')
             .update({ 
               status: 'enviada',
@@ -1382,18 +1924,56 @@ app.post('/api/cron/process-scheduled', async (req, res) => {
               }
             })
             .eq('id', campaign.id);
+
+          if (updateError) {
+            console.error(`[AGENDAMENTO] ❌ Erro ao atualizar campanha:`, updateError);
+            throw updateError;
+          } else {
+            console.log(`[AGENDAMENTO] ✅ Campanha atualizada para status 'enviada'`);
+          }
+
+          console.log(`[AGENDAMENTO] Marcando agendamento como executado...`);
+          // Marcar agendamento como executado
+          const { error: scheduleUpdateError } = await supabase
+            .from('campaign_schedules')
+            .update({ 
+              status: 'executado',
+              executed_at: new Date().toISOString()
+            })
+            .eq('id', schedule.id);
+
+          if (scheduleUpdateError) {
+            console.error(`[AGENDAMENTO] ❌ Erro ao atualizar agendamento:`, scheduleUpdateError);
+            throw scheduleUpdateError;
+          } else {
+            console.log(`[AGENDAMENTO] ✅ Agendamento marcado como executado`);
+            
+            // Limpar tags temporárias após processamento
+            if (tagsTemporarias.has(schedule.id)) {
+              tagsTemporarias.delete(schedule.id);
+              console.log(`🗑️ Tags temporárias limpas para agendamento ${schedule.id}`);
+            }
+          }
+
+          processed++;
+          console.log(`[AGENDAMENTO] ✅ PROCESSAMENTO COMPLETO para ${campaign.nome}`);
+          
+        } else {
+          // Nenhum contato encontrado - marcar como erro
+          const errorMsg = `Nenhum contato encontrado nos segmentos: ${JSON.stringify(campaign.segmentos)}`;
+          console.log(`[AGENDAMENTO] ERRO: ${errorMsg}`);
+          
+          await supabase
+            .from('campaign_schedules')
+            .update({ 
+              status: 'erro',
+              error_message: errorMsg,
+              executed_at: new Date().toISOString()
+            })
+            .eq('id', schedule.id);
+
+          errors++;
         }
-
-        // Marcar agendamento como executado
-        await supabase
-          .from('campaign_schedules')
-          .update({ 
-            status: 'executado',
-            executed_at: new Date().toISOString()
-          })
-          .eq('id', schedule.id);
-
-        processed++;
 
       } catch (scheduleError) {
         console.error('Erro ao processar agendamento:', scheduleError);
@@ -3106,6 +3686,8 @@ app.get('/api/campanhas', authMiddleware, async (req, res) => {
 // Endpoint para compatibilidade com o frontend (campaigns)
 app.get('/api/campaigns', authMiddleware, async (req, res) => {
   try {
+    console.log(`[CAMPAIGNS] Buscando campanhas para user_id: ${req.user.id}`);
+    
     const { data, error } = await supabase
       .from('campanhas')
       .select('*')
@@ -3113,6 +3695,12 @@ app.get('/api/campaigns', authMiddleware, async (req, res) => {
       .order('created_at', { ascending: false });
     
     if (error) throw error;
+    
+    console.log(`[CAMPAIGNS] Encontradas ${data.length} campanhas`);
+    data.forEach(c => {
+      console.log(`[CAMPAIGNS]   - ${c.nome} (status: ${c.status}, user_id: ${c.user_id})`);
+    });
+    
     res.json(data);
   } catch (error) {
     console.error('Erro ao listar campanhas:', error);
