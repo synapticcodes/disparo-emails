@@ -1,0 +1,47 @@
+[build]
+  # Diretório base para build
+  base = "frontend"
+  
+  # Comando para build
+  command = "npm ci && npm run build"
+  
+  # Diretório onde ficam os arquivos buildados (relativo ao base)
+  publish = "build"
+
+[build.environment]
+  # Versão do Node.js
+  NODE_VERSION = "18"
+  
+  # Configurações do React para produção
+  GENERATE_SOURCEMAP = "false"
+  
+  # Não tratar warnings ESLint como erros (importante para CI)
+  CI = "false"
+  
+  # Configurações do Supabase
+  REACT_APP_SUPABASE_URL = "https://ixroiuhpvsljxeynfrqz.supabase.co"
+  REACT_APP_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml4cm9pdWhwdnNsanhleW5mcnF6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQwNzUyMTMsImV4cCI6MjA2OTY1MTIxM30.GggeoRijune6o5eQWQDODw5QnBfd6d1FxWKu7R8Q5FA"
+  
+  # Modo Supabase-apenas
+  REACT_APP_MODE = "supabase-only"
+
+# Configurações de redirecionamento para SPA
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Headers de segurança
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    X-XSS-Protection = "1; mode=block"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+# Cache para assets estáticos
+[[headers]]
+  for = "/static/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
