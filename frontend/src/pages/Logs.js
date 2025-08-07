@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { logs as logsAPI } from '../lib/api'
+import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
 
@@ -15,20 +16,35 @@ const Logs = () => {
   useEffect(() => {
     fetchLogs()
     fetchStats()
-  }, [filters, fetchLogs])
+  }, [fetchLogs, fetchStats])
 
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     try {
       setLoading(true)
-      const params = {
-        limit: 100, // Mostrar mais logs
-        ...(filters.action && { action: filters.action }),
-        ...(filters.status && { status: filters.status })
+      
+      // Construir query do Supabase
+      let query = supabase
+        .from('logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100)
+      
+      // Aplicar filtros se existirem
+      if (filters.action) {
+        query = query.eq('action', filters.action)
+      }
+      if (filters.status) {
+        query = query.eq('status', filters.status)
       }
       
-      const response = await logsAPI.list(params)
-      const data = response.data.data || response.data
-      setLogs(Array.isArray(data) ? data : [])
+      const { data, error } = await query
+      
+      if (error) {
+        console.error('Erro ao carregar logs:', error)
+        throw error
+      }
+      
+      setLogs(data || [])
     } catch (error) {
       console.error('Erro ao carregar logs:', error)
       toast.error('Erro ao carregar logs')
@@ -36,16 +52,36 @@ const Logs = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [filters])
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     try {
-      const response = await logsAPI.stats()
-      setStats(response.data.stats)
+      // Buscar estatísticas diretamente do Supabase
+      const { data: allLogs, error } = await supabase
+        .from('logs')
+        .select('action, status')
+        .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()) // Últimos 30 dias
+      
+      if (error) throw error
+      
+      // Calcular estatísticas
+      const stats = {
+        total_logs: allLogs?.length || 0,
+        by_status: {
+          sucesso: allLogs?.filter(log => log.status === 'sucesso').length || 0,
+          erro: allLogs?.filter(log => log.status === 'erro').length || 0
+        },
+        by_action: {
+          envio_direto: allLogs?.filter(log => log.action === 'envio_direto').length || 0
+        }
+      }
+      
+      setStats(stats)
     } catch (error) {
       console.error('Erro ao carregar estatísticas de logs:', error)
+      // Stats são opcionais, não mostrar erro ao usuário
     }
-  }
+  }, [])
 
   const handleFilterChange = (filterType, value) => {
     setFilters(prev => ({
