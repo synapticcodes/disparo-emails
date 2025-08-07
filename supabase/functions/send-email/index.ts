@@ -80,8 +80,8 @@ serve(async (req) => {
         }
       ],
       from: {
-        email: 'noreply@yourdomain.com', // Você precisa verificar este email no SendGrid
-        name: 'Sistema de Emails'
+        email: 'avisos@lembretescredilly.com',
+        name: 'Lembretes Credilly'
       },
       content: [
         {
@@ -91,7 +91,7 @@ serve(async (req) => {
       ],
       mail_settings: {
         sandbox_mode: {
-          enable: true  // MODO SANDBOX para testes - email não é enviado de verdade
+          enable: false  // Emails reais serão enviados
         }
       }
     }
