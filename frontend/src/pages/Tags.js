@@ -123,7 +123,7 @@ const Tags = () => {
   const handleEdit = (tag) => {
     setEditingTag(tag)
     setFormData({
-      name: tag.name,
+      name: tag.nome,
       color: tag.color,
       icon: tag.icon,
       description: tag.description || ''
@@ -226,7 +226,7 @@ const Tags = () => {
   }
 
   const getTagById = (tagId) => {
-    return tags.find(tag => tag.id === tagId || tag.name === tagId)
+    return tags.find(tag => tag.id === tagId || tag.nome === tagId)
   }
 
   const handleRemoveTagFromContact = async (contactId, tagName, contactEmail) => {
@@ -243,7 +243,7 @@ const Tags = () => {
     const contactTags = getContactTags(contact)
     return contactTags.some(tagName => {
       const tag = getTagById(tagName)
-      return tag && (tag.id === filterTag || tag.name === filterTag)
+      return tag && (tag.id === filterTag || tag.nome === filterTag)
     })
   })
 
@@ -338,7 +338,7 @@ const Tags = () => {
                 </div>
                 
                 <h3 className="metric-card-value" style={{ fontSize: '18px', marginBottom: '8px' }}>
-                  {tag.name}
+                  {tag.nome}
                 </h3>
                 
                 {tag.description && (
@@ -348,7 +348,7 @@ const Tags = () => {
                 )}
                 
                 <p className="metric-card-subtitle">
-                  {contacts.filter(c => getContactTags(c).includes(tag.name)).length} contato(s)
+                  {contacts.filter(c => getContactTags(c).includes(tag.nome)).length} contato(s)
                 </p>
 
                 <div style={{ 
@@ -375,7 +375,7 @@ const Tags = () => {
                     ✏️ Editar
                   </button>
                   <button
-                    onClick={() => handleDelete(tag.id, tag.name)}
+                    onClick={() => handleDelete(tag.id, tag.nome)}
                     style={{
                       flex: 1,
                       padding: '6px 12px',
@@ -410,8 +410,8 @@ const Tags = () => {
             >
               <option value="">Todas as tags</option>
               {tags.map((tag) => (
-                <option key={tag.id} value={tag.name}>
-                  {tag.icon} {tag.name}
+                <option key={tag.id} value={tag.nome}>
+                  {tag.icon} {tag.nome}
                 </option>
               ))}
             </select>
@@ -457,9 +457,9 @@ const Tags = () => {
                               gap: '4px'
                             }}
                           >
-                            {tag.icon} {tag.name}
+                            {tag.icon} {tag.nome}
                             <button
-                              onClick={() => handleRemoveTagFromContact(contact.id, tag.name, contact.email)}
+                              onClick={() => handleRemoveTagFromContact(contact.id, tag.nome, contact.email)}
                               style={{
                                 background: 'none',
                                 border: 'none',
@@ -473,7 +473,7 @@ const Tags = () => {
                               }}
                               onMouseOver={(e) => e.target.style.opacity = '1'}
                               onMouseOut={(e) => e.target.style.opacity = '0.7'}
-                              title={`Remover tag "${tag.name}" deste contato`}
+                              title={`Remover tag "${tag.nome}" deste contato`}
                             >
                               ✕
                             </button>
@@ -624,7 +624,7 @@ const Tags = () => {
                   <option value="">Escolha uma tag</option>
                   {tags.map((tag) => (
                     <option key={tag.id} value={tag.id}>
-                      {tag.icon} {tag.name}
+                      {tag.icon} {tag.nome}
                     </option>
                   ))}
                 </select>
@@ -708,8 +708,8 @@ const Tags = () => {
                 >
                   <option value="">Escolha uma tag para remover</option>
                   {tags.map((tag) => (
-                    <option key={tag.id} value={tag.name}>
-                      {tag.icon} {tag.name}
+                    <option key={tag.id} value={tag.nome}>
+                      {tag.icon} {tag.nome}
                     </option>
                   ))}
                 </select>
@@ -777,7 +777,7 @@ const Tags = () => {
                                         borderRadius: '10px'
                                       }}
                                     >
-                                      {tag.icon} {tag.name}
+                                      {tag.icon} {tag.nome}
                                     </span>
                                   ) : null
                                 })}

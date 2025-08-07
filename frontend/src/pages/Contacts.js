@@ -78,11 +78,15 @@ const Contacts = () => {
     }
 
     try {
+      // Get current user for user_id
+      const { data: { user } } = await supabase.auth.getUser()
+      
       const newTag = {
-        name: newTagInput.trim(),
+        nome: newTagInput.trim(),
         color: '#7c3aed',
         icon: '🏷️',
-        description: `Criado via contatos`
+        description: `Criado via contatos`,
+        user_id: user?.id
       }
 
       const { data: createdTag, error } = await supabase
@@ -99,12 +103,12 @@ const Contacts = () => {
       // Adicionar automaticamente ao contato
       setFormData(prev => ({
         ...prev,
-        tags: [...prev.tags, createdTag.name]
+        tags: [...prev.tags, createdTag.nome]
       }))
 
       setNewTagInput('')
       setShowCreateTag(false)
-      toast.success(`Tag "${createdTag.name}" criada e adicionada!`)
+      toast.success(`Tag "${createdTag.nome}" criada e adicionada!`)
     } catch (error) {
       console.error('Erro ao criar tag:', error)
       toast.error(error.response?.data?.error || 'Erro ao criar tag')
@@ -125,9 +129,13 @@ const Contacts = () => {
     }
 
     try {
+      // Get current user for user_id
+      const { data: { user } } = await supabase.auth.getUser()
+      
       const contactData = {
         ...formData,
-        tags: formData.tags // já é um array
+        tags: formData.tags, // já é um array
+        user_id: user?.id
       }
 
       if (editingContact) {
@@ -251,8 +259,8 @@ const Contacts = () => {
   })
 
   const getTagDisplay = (tagName) => {
-    const tag = availableTags.find(t => t.name === tagName)
-    return tag ? `${tag.icon} ${tag.name}` : `🏷️ ${tagName}`
+    const tag = availableTags.find(t => t.nome === tagName)
+    return tag ? `${tag.icon} ${tag.nome}` : `🏷️ ${tagName}`
   }
 
   const styles = {
@@ -570,8 +578,8 @@ const Contacts = () => {
             >
               <option value="">Todas as tags</option>
               {availableTags.map((tag) => (
-                <option key={tag.id} value={tag.name}>
-                  {tag.icon} {tag.name}
+                <option key={tag.id} value={tag.nome}>
+                  {tag.icon} {tag.nome}
                 </option>
               ))}
             </select>
@@ -677,7 +685,7 @@ const Contacts = () => {
                 {contact.tags && contact.tags.length > 0 && (
                   <div style={styles.tagsContainer}>
                     {(Array.isArray(contact.tags) ? contact.tags : contact.tags.split(',')).map((tagName, index) => {
-                      const tag = availableTags.find(t => t.name === tagName.trim())
+                      const tag = availableTags.find(t => t.nome === tagName.trim())
                       return (
                         <span 
                           key={index} 
@@ -838,33 +846,33 @@ const Contacts = () => {
                             padding: '0.5rem',
                             borderRadius: '0.25rem',
                             cursor: 'pointer',
-                            backgroundColor: formData.tags.includes(tag.name) ? '#f0f9ff' : 'transparent',
-                            border: formData.tags.includes(tag.name) ? '1px solid #0ea5e9' : '1px solid transparent'
+                            backgroundColor: formData.tags.includes(tag.nome) ? '#f0f9ff' : 'transparent',
+                            border: formData.tags.includes(tag.nome) ? '1px solid #0ea5e9' : '1px solid transparent'
                           }}
                           onMouseOver={(e) => {
-                            if (!formData.tags.includes(tag.name)) {
+                            if (!formData.tags.includes(tag.nome)) {
                               e.currentTarget.style.backgroundColor = '#f9fafb'
                             }
                           }}
                           onMouseOut={(e) => {
-                            if (!formData.tags.includes(tag.name)) {
+                            if (!formData.tags.includes(tag.nome)) {
                               e.currentTarget.style.backgroundColor = 'transparent'
                             }
                           }}
                         >
                           <input
                             type="checkbox"
-                            checked={formData.tags.includes(tag.name)}
-                            onChange={() => handleTagToggle(tag.name)}
+                            checked={formData.tags.includes(tag.nome)}
+                            onChange={() => handleTagToggle(tag.nome)}
                             style={{ cursor: 'pointer' }}
                           />
                           <span style={{ fontSize: '1rem' }}>{tag.icon}</span>
                           <span style={{ 
                             flex: 1, 
                             fontSize: '0.9rem',
-                            color: formData.tags.includes(tag.name) ? '#0ea5e9' : '#374151'
+                            color: formData.tags.includes(tag.nome) ? '#0ea5e9' : '#374151'
                           }}>
-                            {tag.name}
+                            {tag.nome}
                           </span>
                           <div
                             style={{

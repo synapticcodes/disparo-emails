@@ -536,7 +536,7 @@ const Schedules = () => {
                         {tags.map((tag) => (
                           <label
                             key={tag.id}
-                            className={`tag-item ${formData.selected_tags.includes(tag.name) ? 'selected' : ''}`}
+                            className={`tag-item ${formData.selected_tags.includes(tag.nome) ? 'selected' : ''}`}
                             style={{
                               display: 'inline-flex',
                               alignItems: 'center',
@@ -544,19 +544,19 @@ const Schedules = () => {
                               border: '2px solid #e0e0e0',
                               borderRadius: '20px',
                               cursor: 'pointer',
-                              backgroundColor: formData.selected_tags.includes(tag.name) ? '#e3f2fd' : '#f9f9f9',
-                              borderColor: formData.selected_tags.includes(tag.name) ? '#2196f3' : '#e0e0e0',
+                              backgroundColor: formData.selected_tags.includes(tag.nome) ? '#e3f2fd' : '#f9f9f9',
+                              borderColor: formData.selected_tags.includes(tag.nome) ? '#2196f3' : '#e0e0e0',
                               transition: 'all 0.2s'
                             }}
                           >
                             <input
                               type="checkbox"
-                              checked={formData.selected_tags.includes(tag.name)}
-                              onChange={() => handleTagSelection(tag.name)}
+                              checked={formData.selected_tags.includes(tag.nome)}
+                              onChange={() => handleTagSelection(tag.nome)}
                               style={{ display: 'none' }}
                             />
                             <span style={{ fontSize: '12px' }}>
-                              {tag.icon || '🏷️'} {tag.name}
+                              {tag.icon || '🏷️'} {tag.nome}
                             </span>
                           </label>
                         ))}

@@ -445,8 +445,8 @@ const Campaigns = () => {
                 >
                   <option value="">Enviar para todos os contatos</option>
                   {tagsList.map((tag) => (
-                    <option key={tag.id} value={tag.name}>
-                      {tag.icon} {tag.name}
+                    <option key={tag.id} value={tag.nome}>
+                      {tag.icon} {tag.nome}
                     </option>
                   ))}
                 </select>
