@@ -2589,17 +2589,29 @@ app.get('/api/stats/campaigns/:id', authMiddleware, async (req, res) => {
 // Estatísticas globais do SendGrid
 app.get('/api/stats/sendgrid/global', authMiddleware, async (req, res) => {
   try {
-    const { start_date = null, end_date = null, limit = 10 } = req.query;
+    let { start_date, end_date, limit = 50 } = req.query;
+    
+    // SendGrid requer start_date e end_date - definir padrões se não fornecidos
+    if (!start_date || !end_date) {
+      const defaultEndDate = new Date();
+      const defaultStartDate = new Date();
+      defaultStartDate.setDate(defaultStartDate.getDate() - 30);
+      
+      start_date = start_date || defaultStartDate.toISOString().split('T')[0];
+      end_date = end_date || defaultEndDate.toISOString().split('T')[0];
+    }
     
     const querystring = new URLSearchParams();
-    if (start_date) querystring.append('start_date', start_date);
-    if (end_date) querystring.append('end_date', end_date);
-    if (limit) querystring.append('limit', limit);
+    querystring.append('start_date', start_date);
+    querystring.append('end_date', end_date);
+    querystring.append('limit', limit);
 
     const request = {
       url: `/v3/stats?${querystring.toString()}`,
       method: 'GET',
     };
+    
+    console.log('📊 Chamando SendGrid:', request.url);
 
     const [response] = await client.request(request);
     
@@ -2787,16 +2799,23 @@ app.get('/api/stats/dashboard', authMiddleware, async (req, res) => {
       supabase.from('campanhas').select('status, created_at, estatisticas').eq('user_id', req.user.id),
       supabase.from('templates').select('id').eq('user_id', req.user.id),
       supabase.from('contatos').select('id').eq('user_id', req.user.id),
-      // SendGrid Global Stats
+      // SendGrid Global Stats (requer start_date e end_date)
       client.request({
-        url: `/v3/stats?start_date=${sendgridStartDate}&end_date=${sendgridEndDate}&limit=10`,
+        url: `/v3/stats?start_date=${sendgridStartDate}&end_date=${sendgridEndDate}&limit=50`,
         method: 'GET',
-      }).catch(err => ({ value: null, error: err.message })),
+      }).catch(err => {
+        console.error('❌ Erro na API SendGrid /v3/stats:', err.code, err.message);
+        console.error('🔍 URL tentada:', `/v3/stats?start_date=${sendgridStartDate}&end_date=${sendgridEndDate}&limit=50`);
+        return { value: null, error: err.message, status: 'rejected' };
+      }),
       // SendGrid Suppressions
       client.request({
         url: `/v3/suppression/bounces?limit=50`,
         method: 'GET',
-      }).catch(err => ({ value: null, error: err.message }))
+      }).catch(err => {
+        console.error('❌ Erro na API SendGrid /v3/suppression/bounces:', err.code, err.message);
+        return { value: null, error: err.message, status: 'rejected' };
+      })
     ]);
 
     // Processar dados locais
