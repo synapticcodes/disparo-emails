@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { api, tags } from '../lib/api'
+import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
 
@@ -26,14 +27,21 @@ const Contacts = () => {
   const fetchData = async () => {
     try {
       setLoading(true)
-      const [contactsRes, tagsRes] = await Promise.all([
-        api.get('/api/contacts'),
-        tags.list()
+      
+      // Buscar dados diretamente do Supabase
+      const [
+        { data: contactsData, error: contactsError },
+        { data: tagsData, error: tagsError }
+      ] = await Promise.all([
+        supabase.from('contatos').select('*'),
+        supabase.from('tags').select('*')
       ])
       
-      setContacts(contactsRes.data)
-      const tagsData = tagsRes.data.data || tagsRes.data
-      setAvailableTags(Array.isArray(tagsData) ? tagsData : [])
+      if (contactsError) console.error('Erro contatos:', contactsError)
+      if (tagsError) console.error('Erro tags:', tagsError)
+      
+      setContacts(contactsData || [])
+      setAvailableTags(tagsData || [])
     } catch (error) {
       console.error('Erro ao carregar dados:', error)
       if (error.response?.status === 401) {

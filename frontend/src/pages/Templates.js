@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { api, variables as variablesApi, datasets as datasetsApi } from '../lib/api'
+import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import SimpleVariableEditor from '../components/SimpleVariableEditor'
 import '../styles/dashboard.css'
@@ -32,20 +33,24 @@ const Templates = () => {
     try {
       setLoading(true)
       
-      // Carregar templates, variáveis e datasets em paralelo
-      const [templatesRes, variablesRes, datasetsRes] = await Promise.all([
-        api.get('/api/templates'),
-        variablesApi.list().catch(() => ({ data: { data: [] } })),
-        datasetsApi.list().catch(() => ({ data: { data: [] } }))
+      // Carregar dados diretamente do Supabase
+      const [
+        { data: templatesData, error: templatesError },
+        { data: variablesData, error: variablesError },
+        { data: datasetsData, error: datasetsError }
+      ] = await Promise.all([
+        supabase.from('templates').select('*'),
+        supabase.from('variaveis_customizadas').select('*'),
+        supabase.from('datasets').select('*')
       ])
       
-      const templatesData = templatesRes.data.data || templatesRes.data
-      const variablesData = variablesRes.data.data || []
-      const datasetsData = datasetsRes.data.data || []
+      if (templatesError) console.error('Erro templates:', templatesError)
+      if (variablesError) console.error('Erro variáveis:', variablesError)
+      if (datasetsError) console.error('Erro datasets:', datasetsError)
       
-      setTemplates(Array.isArray(templatesData) ? templatesData : [])
-      setVariables(Array.isArray(variablesData) ? variablesData : [])
-      setDatasets(Array.isArray(datasetsData) ? datasetsData : [])
+      setTemplates(templatesData || [])
+      setVariables(variablesData || [])
+      setDatasets(datasetsData || [])
       
     } catch (error) {
       console.error('Erro ao carregar dados:', error)

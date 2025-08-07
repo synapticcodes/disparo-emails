@@ -37,50 +37,76 @@ const Dashboard = () => {
       // Debug: verificar estado de autenticação antes da chamada
       await debugAuthState(supabase)
       
-      // Fazer chamada real para o endpoint SendGrid
-      console.log('🔄 Buscando dados do SendGrid via API...')
-      const response = await api.get('/api/stats/dashboard')
+      // Buscar dados diretamente do Supabase (sem API backend)
+      console.log('🔄 Buscando dados diretamente do Supabase...')
       
-      if (!response.data || !response.data.success) {
-        throw new Error('Resposta inválida da API')
-      }
+      // Buscar dados das tabelas principais
+      const [
+        { data: contatos, error: contatosError },
+        { data: templates, error: templatesError },
+        { data: campanhas, error: campanhasError },
+        { data: emailLogs, error: emailLogsError }
+      ] = await Promise.all([
+        supabase.from('contatos').select('id'),
+        supabase.from('templates').select('id'),
+        supabase.from('campanhas').select('id, status'),
+        supabase.from('email_logs').select('id, status')
+      ])
       
-      const data = response.data
-      console.log('📊 Dados recebidos do SendGrid:', data)
-      setDataSource(data.source || 'SendGrid API')
+      // Verificar erros
+      if (contatosError) console.error('Erro contatos:', contatosError)
+      if (templatesError) console.error('Erro templates:', templatesError)
+      if (campanhasError) console.error('Erro campanhas:', campanhasError)
+      if (emailLogsError) console.error('Erro email_logs:', emailLogsError)
+      
+      // Calcular métricas dos dados do Supabase
+      const totalContatos = contatos?.length || 0
+      const totalTemplates = templates?.length || 0
+      const totalCampanhas = campanhas?.length || 0
+      const campanhasAtivas = campanhas?.filter(c => c.status === 'ativa' || c.status === 'enviando').length || 0
+      const emailsEnviados = emailLogs?.filter(e => e.status === 'sent').length || 0
+      
+      console.log('📊 Dados do Supabase:', {
+        totalContatos,
+        totalTemplates,
+        totalCampanhas,
+        campanhasAtivas,
+        emailsEnviados
+      })
+      setDataSource('Supabase Database (Direto)')
 
-      // Mapear dados do SendGrid para o estado local
-      const sendgridStats = {
-        totalEmails: data.sendgrid_metrics?.requests || 0,
-        emailsEnviados: data.sendgrid_metrics?.requests || 0,
-        emailsEntregues: data.sendgrid_metrics?.delivered || 0,
-        emailsAbertos: data.sendgrid_metrics?.unique_opens || 0,
-        taxaAbertura: data.performance?.open_rate ? parseFloat(data.performance.open_rate) / 100 : 0,
-        emailsClicados: data.sendgrid_metrics?.unique_clicks || 0,
-        taxaClique: data.performance?.click_rate ? parseFloat(data.performance.click_rate) / 100 : 0,
-        campanhasAtivas: data.overview?.total_campaigns || 0,
-        totalContatos: data.overview?.total_contacts || 0,
-        totalTemplates: data.overview?.total_templates || 0,
-        totalSupressoes: data.overview?.total_suppressions || 0,
-        totalBounces: data.sendgrid_metrics?.bounces || 0,
-        taxaEntrega: data.performance?.delivery_rate ? parseFloat(data.performance.delivery_rate) / 100 : 0,
-        taxaBounce: data.performance?.bounce_rate ? parseFloat(data.performance.bounce_rate) / 100 : 0
+      // Mapear dados do Supabase para o estado local
+      const supabaseStats = {
+        totalEmails: emailsEnviados,
+        emailsEnviados: emailsEnviados,
+        emailsEntregues: emailLogs?.filter(e => e.status === 'delivered').length || 0,
+        emailsAbertos: emailLogs?.filter(e => e.status === 'opened').length || 0,
+        taxaAbertura: emailsEnviados > 0 ? (emailLogs?.filter(e => e.status === 'opened').length || 0) / emailsEnviados : 0,
+        emailsClicados: emailLogs?.filter(e => e.status === 'clicked').length || 0,
+        taxaClique: emailsEnviados > 0 ? (emailLogs?.filter(e => e.status === 'clicked').length || 0) / emailsEnviados : 0,
+        campanhasAtivas: campanhasAtivas,
+        totalContatos: totalContatos,
+        totalTemplates: totalTemplates,
+        totalSupressoes: 0,
+        totalBounces: emailLogs?.filter(e => e.status === 'bounced').length || 0,
+        taxaEntrega: emailsEnviados > 0 ? (emailLogs?.filter(e => e.status === 'delivered').length || 0) / emailsEnviados : 0,
+        taxaBounce: emailsEnviados > 0 ? (emailLogs?.filter(e => e.status === 'bounced').length || 0) / emailsEnviados : 0
       }
 
-      setStats(sendgridStats)
+      setStats(supabaseStats)
 
-      // Configurar dados do gráfico com dados do SendGrid
+      // Configurar dados do gráfico com dados do Supabase
       setChartData({
         emails: {
           labels: ['Enviados', 'Entregues', 'Abertos', 'Clicados', 'Bounces'],
           datasets: [{
-            label: 'Métricas SendGrid',
+            label: 'Métricas Supabase',
             data: [
-              sendgridStats.emailsEnviados, 
-              sendgridStats.emailsEntregues, 
-              sendgridStats.emailsAbertos, 
-              sendgridStats.emailsClicados,
-              sendgridStats.totalBounces
+              supabaseStats.emailsEnviados, 
+              supabaseStats.emailsEntregues, 
+              supabaseStats.emailsAbertos, 
+              supabaseStats.emailsClicados,
+              supabaseStats.totalBounces
             ],
             backgroundColor: [
               'rgba(59, 130, 246, 0.8)',   // Azul - Enviados
@@ -103,10 +129,10 @@ const Dashboard = () => {
           labels: ['Campanhas', 'Contatos', 'Templates', 'Supressões'],
           datasets: [{
             data: [
-              sendgridStats.campanhasAtivas, 
-              sendgridStats.totalContatos, 
-              sendgridStats.totalTemplates, 
-              sendgridStats.totalSupressoes
+              supabaseStats.campanhasAtivas, 
+              supabaseStats.totalContatos, 
+              supabaseStats.totalTemplates, 
+              supabaseStats.totalSupressoes
             ],
             backgroundColor: [
               'rgba(139, 92, 246, 0.8)',

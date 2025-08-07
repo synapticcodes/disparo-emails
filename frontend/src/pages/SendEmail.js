@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { api, templates, contacts, variables as variablesApi } from '../lib/api'
+import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import SimpleVariableEditor from '../components/SimpleVariableEditor'
 import '../styles/dashboard.css'
@@ -26,26 +27,26 @@ const SendEmail = () => {
   const fetchData = async () => {
     try {
       console.log('Carregando templates, contatos e variáveis...')
-      const [templatesRes, contactsRes, variablesRes] = await Promise.all([
-        templates.list(),
-        contacts.list(),
-        variablesApi.list().catch(() => ({ data: { data: [] } }))
+      
+      // Buscar dados diretamente do Supabase
+      const [
+        { data: templatesData, error: templatesError },
+        { data: contactsData, error: contactsError },
+        { data: variablesData, error: variablesError }
+      ] = await Promise.all([
+        supabase.from('templates').select('*'),
+        supabase.from('contatos').select('*'),
+        supabase.from('variaveis_customizadas').select('*')
       ])
       
-      // Handle templates
-      const templatesData = templatesRes.data.data || templatesRes.data
-      setTemplatesList(Array.isArray(templatesData) ? templatesData : [])
-      console.log('Templates carregados:', templatesData)
+      if (templatesError) console.error('Erro templates:', templatesError)
+      if (contactsError) console.error('Erro contatos:', contactsError)
+      if (variablesError) console.error('Erro variáveis:', variablesError)
       
-      // Handle contacts
-      const contactsData = contactsRes.data.data || contactsRes.data
-      setContactsList(Array.isArray(contactsData) ? contactsData : [])
-      console.log('Contatos carregados:', contactsData)
-
-      // Handle variables
-      const variablesData = variablesRes.data.data || []
-      setVariables(Array.isArray(variablesData) ? variablesData : [])
-      console.log('Variáveis carregadas:', variablesData)
+      setTemplatesList(templatesData || [])
+      setContactsList(contactsData || [])
+      setVariables(variablesData || [])
+      console.log('Dados carregados do Supabase:', { templatesData, contactsData, variablesData })
       
     } catch (error) {
       console.error('Erro ao carregar dados:', error)
@@ -186,11 +187,17 @@ const SendEmail = () => {
 
     try {
       setLoading(true)
-      await api.post('/api/email/send', {
-        to: emailData.to,
-        subject: emailData.subject,
-        html: emailData.html
+      
+      // Chamar Edge Function diretamente
+      const { data, error } = await supabase.functions.invoke('send-email', {
+        body: {
+          to: emailData.to,
+          subject: emailData.subject,
+          html: emailData.html
+        }
       })
+      
+      if (error) throw error
 
       toast.success('Email enviado com sucesso!')
       
