@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
+import { logContactAction } from '../lib/logger'
 import '../styles/dashboard.css'
 
 const Contacts = () => {
@@ -137,6 +138,9 @@ const Contacts = () => {
         
         if (error) throw error
         toast.success('Contato atualizado com sucesso!')
+        
+        // Log da atualização
+        await logContactAction.update(editingContact.id, contactData, true)
       } else {
         const { error } = await supabase
           .from('contatos')
@@ -144,6 +148,9 @@ const Contacts = () => {
         
         if (error) throw error
         toast.success('Contato criado com sucesso!')
+        
+        // Log da criação
+        await logContactAction.create(contactData, true)
       }
 
       setShowModal(false)
@@ -157,6 +164,13 @@ const Contacts = () => {
     } catch (error) {
       console.error('Erro ao salvar contato:', error)
       toast.error(error.response?.data?.error || 'Erro ao salvar contato')
+      
+      // Log do erro
+      if (editingContact) {
+        await logContactAction.update(editingContact.id, formData, false, error)
+      } else {
+        await logContactAction.create(formData, false, error)
+      }
     }
   }
 
@@ -184,10 +198,17 @@ const Contacts = () => {
       
       if (error) throw error
       toast.success('Contato excluído com sucesso!')
+      
+      // Log da exclusão
+      await logContactAction.delete(contactId, contactEmail, true)
+      
       fetchData()
     } catch (error) {
       console.error('Erro ao excluir contato:', error)
       toast.error(error.message || 'Erro ao excluir contato')
+      
+      // Log do erro
+      await logContactAction.delete(contactId, contactEmail, false, error)
     }
   }
 

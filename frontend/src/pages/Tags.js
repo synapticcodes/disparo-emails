@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { logTagAction, logBulkAction } from '../lib/logger'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
 
@@ -91,6 +92,9 @@ const Tags = () => {
         
         if (error) throw error
         toast.success('Tag atualizada com sucesso!')
+        
+        // Log da atualização (usando create pois não há update específico)
+        await logTagAction.create(formData, true)
       } else {
         const { error } = await supabase
           .from('tags')
@@ -98,6 +102,9 @@ const Tags = () => {
         
         if (error) throw error
         toast.success('Tag criada com sucesso!')
+        
+        // Log da criação
+        await logTagAction.create(formData, true)
       }
 
       setShowModal(false)
@@ -107,6 +114,9 @@ const Tags = () => {
     } catch (error) {
       console.error('Erro ao salvar tag:', error)
       toast.error(error.message || 'Erro ao salvar tag')
+      
+      // Log do erro
+      await logTagAction.create(formData, false, error)
     }
   }
 
@@ -134,10 +144,17 @@ const Tags = () => {
       
       if (error) throw error
       toast.success('Tag excluída com sucesso!')
+      
+      // Log da exclusão
+      await logTagAction.delete(tagId, tagName, true)
+      
       fetchData()
     } catch (error) {
       console.error('Erro ao excluir tag:', error)
       toast.error(error.message || 'Erro ao excluir tag')
+      
+      // Log do erro
+      await logTagAction.delete(tagId, tagName, false, error)
     }
   }
 
@@ -154,6 +171,15 @@ const Tags = () => {
 
     // Temporary: Bulk operations not implemented yet
     toast.info('Função de tag em lote temporariamente indisponível')
+    
+    // Log da operação em massa (mesmo sendo temporária)
+    const selectedTag = tags.find(tag => tag.id === selectedTagForBulk)
+    await logBulkAction.tagContacts(
+      selectedContacts,
+      selectedTag?.nome || 'Tag desconhecida',
+      true
+    )
+    
     setShowBulkModal(false)
     setSelectedContacts([])
     setSelectedTagForBulk('')
@@ -172,6 +198,15 @@ const Tags = () => {
 
     // Temporary: Bulk operations not implemented yet
     toast.info('Função de remoção de tag em lote temporariamente indisponível')
+    
+    // Log da operação em massa de remoção (mesmo sendo temporária)
+    const selectedTag = tags.find(tag => tag.nome === selectedTagForRemoval)
+    await logBulkAction.removeTagContacts(
+      selectedContacts,
+      selectedTag?.nome || selectedTagForRemoval,
+      true
+    )
+    
     setShowBulkRemoveModal(false)
     setSelectedContacts([])
     setSelectedTagForRemoval('')

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { logCampaignAction } from '../lib/logger'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
 
@@ -139,12 +140,32 @@ const Schedules = () => {
         scheduleData.selected_tags = formData.selected_tags
       }
 
+      // Buscar nome da campanha para o log
+      const selectedCampaign = campaigns.find(c => c.id === formData.campaign_id)
+      const campaignName = selectedCampaign?.nome || 'Campanha desconhecida'
+
       if (editingSchedule) {
         toast.info('Agendamento temporariamente indisponível')
         toast.success('Agendamento atualizado com sucesso!')
+        
+        // Log da atualização de agendamento
+        await logCampaignAction.schedule(
+          editingSchedule.campaign_id,
+          campaignName,
+          formData.scheduled_at,
+          true
+        )
       } else {
         toast.info('Agendamento temporariamente indisponível')
         toast.success('Agendamento criado com sucesso!')
+        
+        // Log da criação de agendamento
+        await logCampaignAction.schedule(
+          formData.campaign_id,
+          campaignName,
+          formData.scheduled_at,
+          true
+        )
       }
 
       setShowModal(false)
@@ -164,6 +185,18 @@ const Schedules = () => {
     } catch (error) {
       console.error('Erro ao salvar agendamento:', error)
       toast.error(error.response?.data?.error || 'Erro ao salvar agendamento')
+      
+      // Log do erro
+      const selectedCampaign = campaigns.find(c => c.id === formData.campaign_id)
+      const campaignName = selectedCampaign?.nome || 'Campanha desconhecida'
+      
+      await logCampaignAction.schedule(
+        formData.campaign_id,
+        campaignName,
+        formData.scheduled_at,
+        false,
+        error
+      )
     }
   }
 

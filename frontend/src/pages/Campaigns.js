@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { campaigns, templates, tags } from '../lib/api'
+import { supabase } from '../lib/supabase'
+import { logCampaignAction } from '../lib/logger'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
 
@@ -25,20 +26,31 @@ const Campaigns = () => {
   const fetchData = async () => {
     try {
       setLoading(true)
-      const [campaignsRes, templatesRes, tagsRes] = await Promise.all([
-        campaigns.list(),
-        templates.list(),
-        tags.list()
+      
+      // Buscar dados diretamente do Supabase
+      const [
+        { data: campaignsData, error: campaignsError },
+        { data: templatesData, error: templatesError },
+        { data: tagsData, error: tagsError }
+      ] = await Promise.all([
+        supabase.from('campanhas').select('*').order('created_at', { ascending: false }),
+        supabase.from('templates').select('*').order('created_at', { ascending: false }),
+        supabase.from('tags').select('*').order('created_at', { ascending: false })
       ])
       
-      // Handle different response formats
-      const campaignsData = campaignsRes.data.data || campaignsRes.data
-      const templatesData = templatesRes.data.data || templatesRes.data
-      const tagsData = tagsRes.data.data || tagsRes.data
+      if (campaignsError) console.error('Erro campanhas:', campaignsError)
+      if (templatesError) console.error('Erro templates:', templatesError)
+      if (tagsError) console.error('Erro tags:', tagsError)
       
-      setCampaignsList(Array.isArray(campaignsData) ? campaignsData : [])
-      setTemplatesList(Array.isArray(templatesData) ? templatesData : [])
-      setTagsList(Array.isArray(tagsData) ? tagsData : [])
+      setCampaignsList(campaignsData || [])
+      setTemplatesList(templatesData || [])
+      setTagsList(tagsData || [])
+      
+      console.log('Dados carregados:', {
+        campanhas: campaignsData?.length || 0,
+        templates: templatesData?.length || 0,
+        tags: tagsData?.length || 0
+      })
     } catch (error) {
       console.error('Erro ao carregar dados:', error)
       toast.error('Erro ao carregar dados')
@@ -74,12 +86,40 @@ const Campaigns = () => {
     }
 
     try {
+      const campaignData = {
+        nome: formData.name,
+        assunto: formData.subject,
+        template_id: formData.template_id,
+        tag_filter: formData.tag_filter,
+        agendamento: formData.scheduled_at || null,
+        status: 'rascunho'
+      }
+
       if (editingCampaign) {
-        await campaigns.update(editingCampaign.id, formData)
+        const { error } = await supabase
+          .from('campanhas')
+          .update(campaignData)
+          .eq('id', editingCampaign.id)
+        
+        if (error) throw error
         toast.success('Campanha atualizada com sucesso!')
+        
+        // Log da atualização
+        await logCampaignAction.create(campaignData, true)
       } else {
-        await campaigns.create(formData)
+        const { error } = await supabase
+          .from('campanhas')
+          .insert([campaignData])
+        
+        if (error) throw error
         toast.success('Campanha criada com sucesso!')
+        
+        // Log da criação
+        await logCampaignAction.create({
+          nome: formData.name,
+          assunto: formData.subject,
+          segmentos: formData.tag_filter ? [formData.tag_filter] : []
+        }, true)
       }
 
       setShowModal(false)
@@ -94,7 +134,16 @@ const Campaigns = () => {
       fetchData()
     } catch (error) {
       console.error('Erro ao salvar campanha:', error)
-      toast.error(error.response?.data?.error || 'Erro ao salvar campanha')
+      toast.error(error.message || 'Erro ao salvar campanha')
+      
+      // Log do erro
+      const campaignData = {
+        nome: formData.name,
+        assunto: formData.subject,
+        segmentos: formData.tag_filter ? [formData.tag_filter] : []
+      }
+      
+      await logCampaignAction.create(campaignData, false, error)
     }
   }
 
@@ -116,12 +165,17 @@ const Campaigns = () => {
     }
 
     try {
-      await campaigns.delete(campaignId)
+      const { error } = await supabase
+        .from('campanhas')
+        .delete()
+        .eq('id', campaignId)
+      
+      if (error) throw error
       toast.success('Campanha excluída com sucesso!')
       fetchData()
     } catch (error) {
       console.error('Erro ao excluir campanha:', error)
-      toast.error(error.response?.data?.error || 'Erro ao excluir campanha')
+      toast.error(error.message || 'Erro ao excluir campanha')
     }
   }
 
@@ -131,12 +185,39 @@ const Campaigns = () => {
     }
 
     try {
-      await campaigns.send(campaignId)
+      // Enviar campanha via Edge Function
+      const { data, error } = await supabase.functions.invoke('send-campaign', {
+        body: { campaign_id: campaignId }
+      })
+      
+      if (error) throw error
+      if (data?.error) throw new Error(data.error)
+      
       toast.success('Campanha enviada com sucesso!')
+      
+      // Log do envio da campanha
+      const campaign = campaignsList.find(c => c.id === campaignId)
+      await logCampaignAction.send(
+        campaignId,
+        campaign?.nome || 'Campanha desconhecida',
+        data?.totalSent || 0,
+        true
+      )
+      
       fetchData()
     } catch (error) {
       console.error('Erro ao enviar campanha:', error)
-      toast.error(error.response?.data?.error || 'Erro ao enviar campanha')
+      toast.error(error.message || 'Erro ao enviar campanha')
+      
+      // Log do erro no envio
+      const campaign = campaignsList.find(c => c.id === campaignId)
+      await logCampaignAction.send(
+        campaignId,
+        campaign?.nome || 'Campanha desconhecida',
+        0,
+        false,
+        error
+      )
     }
   }
 
