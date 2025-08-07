@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
-import { logs as logsAPI } from '../lib/api'
+import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
@@ -13,14 +12,12 @@ const Logs = () => {
     status: ''
   })
 
-  useEffect(() => {
-    fetchLogs()
-    fetchStats()
-  }, [fetchLogs, fetchStats])
-
-  const fetchLogs = useCallback(async () => {
+  // Função para buscar logs
+  const fetchLogs = async () => {
     try {
       setLoading(true)
+      
+      console.log('🔄 Buscando logs do Supabase...')
       
       // Construir query do Supabase
       let query = supabase
@@ -40,29 +37,36 @@ const Logs = () => {
       const { data, error } = await query
       
       if (error) {
-        console.error('Erro ao carregar logs:', error)
+        console.error('❌ Erro ao carregar logs:', error)
         throw error
       }
       
+      console.log('✅ Logs carregados:', data?.length || 0)
       setLogs(data || [])
     } catch (error) {
-      console.error('Erro ao carregar logs:', error)
+      console.error('❌ Erro ao carregar logs:', error)
       toast.error('Erro ao carregar logs')
       setLogs([])
     } finally {
       setLoading(false)
     }
-  }, [filters])
+  }
 
-  const fetchStats = useCallback(async () => {
+  // Função para buscar estatísticas
+  const fetchStats = async () => {
     try {
+      console.log('🔄 Buscando estatísticas...')
+      
       // Buscar estatísticas diretamente do Supabase
       const { data: allLogs, error } = await supabase
         .from('logs')
         .select('action, status')
         .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()) // Últimos 30 dias
       
-      if (error) throw error
+      if (error) {
+        console.error('❌ Erro ao buscar stats:', error)
+        return // Stats são opcionais
+      }
       
       // Calcular estatísticas
       const stats = {
@@ -76,12 +80,28 @@ const Logs = () => {
         }
       }
       
+      console.log('✅ Stats calculados:', stats)
       setStats(stats)
     } catch (error) {
-      console.error('Erro ao carregar estatísticas de logs:', error)
+      console.error('❌ Erro ao carregar estatísticas:', error)
       // Stats são opcionais, não mostrar erro ao usuário
     }
-  }, [])
+  }
+
+  // UseEffect para carregar dados iniciais
+  useEffect(() => {
+    console.log('🚀 Iniciando carregamento dos logs...')
+    fetchLogs()
+    fetchStats()
+  }, []) // Sem dependências - roda só uma vez
+
+  // UseEffect para recarregar quando filtros mudam
+  useEffect(() => {
+    if (filters.action || filters.status) {
+      console.log('🔄 Filtros mudaram, recarregando logs...', filters)
+      fetchLogs()
+    }
+  }, [filters.action, filters.status]) // Só depende dos valores dos filtros
 
   const handleFilterChange = (filterType, value) => {
     setFilters(prev => ({
@@ -197,7 +217,10 @@ const Logs = () => {
   if (loading) {
     return (
       <div className="dashboard-page">
-        <div className="loading-spinner">Carregando logs...</div>
+        <div className="loading-container">
+          <div className="loading-spinner"></div>
+          <p>Carregando logs...</p>
+        </div>
       </div>
     )
   }
@@ -213,7 +236,10 @@ const Logs = () => {
         </div>
         <div className="dashboard-controls">
           <button
-            onClick={fetchLogs}
+            onClick={() => {
+              fetchLogs()
+              fetchStats()
+            }}
             className="dashboard-refresh-btn"
           >
             🔄 Atualizar
