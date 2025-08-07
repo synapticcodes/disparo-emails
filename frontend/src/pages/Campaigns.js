@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { api, campaigns, templates, tags } from '../lib/api'
+import { campaigns, templates, tags } from '../lib/api'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
 

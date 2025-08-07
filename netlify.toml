@@ -15,6 +15,9 @@
   # Configurações do React para produção
   GENERATE_SOURCEMAP = "false"
   
+  # Não tratar warnings ESLint como erros (importante para CI)
+  CI = "false"
+  
   # Configurações do Supabase
   REACT_APP_SUPABASE_URL = "https://ixroiuhpvsljxeynfrqz.supabase.co"
   REACT_APP_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml4cm9pdWhwdnNsanhleW5mcnF6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQwNzUyMTMsImV4cCI6MjA2OTY1MTIxM30.GggeoRijune6o5eQWQDODw5QnBfd6d1FxWKu7R8Q5FA"

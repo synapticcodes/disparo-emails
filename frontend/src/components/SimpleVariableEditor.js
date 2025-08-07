@@ -56,7 +56,7 @@ const SimpleVariableEditor = ({
     if (textareaRef.current) {
       textareaRef.current.insertAtCursor = insertAtCursor
     }
-  }, [value])
+  }, [value, insertAtCursor])
 
   return (
     <div className="simple-variable-editor" style={{ position: 'relative', ...style }}>

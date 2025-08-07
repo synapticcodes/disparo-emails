@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { api, variables as variablesApi, datasets as datasetsApi } from '../lib/api'
+import { variables as variablesApi, datasets as datasetsApi } from '../lib/api'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
 
@@ -8,7 +8,7 @@ const Variables = () => {
   const [datasets, setDatasets] = useState([])
   const [loading, setLoading] = useState(true)
   const [showVariableModal, setShowVariableModal] = useState(false)
-  const [showDatasetModal, setShowDatasetModal] = useState(false)
+  // const [showDatasetModal, setShowDatasetModal] = useState(false) // Unused variable
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [editingVariable, setEditingVariable] = useState(null)
   const [activeTab, setActiveTab] = useState('variables')

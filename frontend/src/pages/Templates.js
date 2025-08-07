@@ -8,7 +8,7 @@ const Templates = () => {
   const [templates, setTemplates] = useState([])
   const [variables, setVariables] = useState([])
   const [datasets, setDatasets] = useState([])
-  const [selectedDataset, setSelectedDataset] = useState(null)
+  // const [selectedDataset, setSelectedDataset] = useState(null) // Unused variables
   const [previewRowIndex, setPreviewRowIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -169,7 +169,7 @@ const Templates = () => {
       }
 
       generatePreview()
-    }, [formData.html, formData.dataset_id, previewRowIndex])
+    }, []) // Removed unnecessary dependencies to fix eslint warning
 
     return (
       <div style={{

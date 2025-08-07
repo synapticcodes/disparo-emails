@@ -15,7 +15,7 @@ const Logs = () => {
   useEffect(() => {
     fetchLogs()
     fetchStats()
-  }, [filters])
+  }, [filters, fetchLogs])
 
   const fetchLogs = async () => {
     try {
