@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { contacts as contactsApi } from '../lib/api'
 import { logTagAction, logBulkAction } from '../lib/logger'
 import toast from 'react-hot-toast'
 import '../styles/dashboard.css'
@@ -169,16 +170,45 @@ const Tags = () => {
       return
     }
 
-    // Temporary: Bulk operations not implemented yet
-    toast.info('Função de tag em lote temporariamente indisponível')
-    
-    // Log da operação em massa (mesmo sendo temporária)
-    const selectedTag = tags.find(tag => tag.id === selectedTagForBulk)
-    await logBulkAction.tagContacts(
-      selectedContacts,
-      selectedTag?.nome || 'Tag desconhecida',
-      true
-    )
+    try {
+      const selectedTag = tags.find(tag => tag.id === selectedTagForBulk)
+      
+      const result = await contactsApi.bulkTag({
+        contactIds: selectedContacts,
+        tagId: selectedTagForBulk
+      })
+      
+      const { results } = result.data
+      
+      if (results && results.updated > 0) {
+        toast.success(`Tag "${selectedTag?.nome}" aplicada a ${results.updated} contato(s) com sucesso!`)
+      } else {
+        toast.info(`Todos os ${selectedContacts.length} contato(s) já possuem a tag "${selectedTag?.nome}"`)
+      }
+      
+      // Log da operação em massa
+      await logBulkAction.tagContacts(
+        selectedContacts,
+        selectedTag?.nome || 'Tag desconhecida',
+        true
+      )
+      
+      // Refresh data to show updated tags
+      fetchData()
+      
+    } catch (error) {
+      console.error('Erro ao aplicar tags em massa:', error)
+      toast.error(error.message || 'Erro ao aplicar tags em massa')
+      
+      // Log do erro
+      const selectedTag = tags.find(tag => tag.id === selectedTagForBulk)
+      await logBulkAction.tagContacts(
+        selectedContacts,
+        selectedTag?.nome || 'Tag desconhecida',
+        false,
+        error
+      )
+    }
     
     setShowBulkModal(false)
     setSelectedContacts([])
@@ -196,16 +226,42 @@ const Tags = () => {
       return
     }
 
-    // Temporary: Bulk operations not implemented yet
-    toast.info('Função de remoção de tag em lote temporariamente indisponível')
-    
-    // Log da operação em massa de remoção (mesmo sendo temporária)
-    const selectedTag = tags.find(tag => tag.nome === selectedTagForRemoval)
-    await logBulkAction.removeTagContacts(
-      selectedContacts,
-      selectedTag?.nome || selectedTagForRemoval,
-      true
-    )
+    try {
+      const result = await contactsApi.bulkRemoveTag({
+        contactIds: selectedContacts,
+        tagName: selectedTagForRemoval
+      })
+      
+      const { results } = result.data
+      
+      if (results && results.updated > 0) {
+        toast.success(`Tag "${selectedTagForRemoval}" removida de ${results.updated} contato(s) com sucesso!`)
+      } else if (results && results.not_found > 0) {
+        toast.info(`${results.not_found} contato(s) não possuíam a tag "${selectedTagForRemoval}"`)
+      }
+      
+      // Log da operação em massa de remoção
+      await logBulkAction.removeTagContacts(
+        selectedContacts,
+        selectedTagForRemoval,
+        true
+      )
+      
+      // Refresh data to show updated tags
+      fetchData()
+      
+    } catch (error) {
+      console.error('Erro ao remover tags em massa:', error)
+      toast.error(error.message || 'Erro ao remover tags em massa')
+      
+      // Log do erro
+      await logBulkAction.removeTagContacts(
+        selectedContacts,
+        selectedTagForRemoval,
+        false,
+        error
+      )
+    }
     
     setShowBulkRemoveModal(false)
     setSelectedContacts([])
@@ -234,8 +290,27 @@ const Tags = () => {
       return
     }
 
-    // Temporary: Individual tag removal not implemented yet
-    toast.info('Funcionalidade de remoção de tag individual temporariamente indisponível')
+    try {
+      const result = await contactsApi.bulkRemoveTag({
+        contactIds: [contactId],
+        tagName: tagName
+      })
+      
+      const { results } = result.data
+      
+      if (results && results.updated > 0) {
+        toast.success(`Tag "${tagName}" removida do contato "${contactEmail}" com sucesso!`)
+      } else if (results && results.not_found > 0) {
+        toast.warning(`Contato "${contactEmail}" não possui a tag "${tagName}"`)
+      }
+      
+      // Refresh data to show updated tags
+      fetchData()
+      
+    } catch (error) {
+      console.error('Erro ao remover tag individual:', error)
+      toast.error(error.message || 'Erro ao remover tag do contato')
+    }
   }
 
   const filteredContacts = contacts.filter(contact => {
