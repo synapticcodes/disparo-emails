@@ -71,7 +71,7 @@ serve(async (req) => {
 
     console.log('🔑 SendGrid API key found, length:', sendgridApiKey.length)
 
-    // Prepare SendGrid payload - versão mais simples possível
+    // Prepare SendGrid payload
     const sendgridPayload = {
       personalizations: [
         {
@@ -80,7 +80,7 @@ serve(async (req) => {
         }
       ],
       from: {
-        email: 'test@example.com',
+        email: 'noreply@yourdomain.com', // Você precisa verificar este email no SendGrid
         name: 'Sistema de Emails'
       },
       content: [
@@ -88,7 +88,12 @@ serve(async (req) => {
           type: 'text/html',
           value: html
         }
-      ]
+      ],
+      mail_settings: {
+        sandbox_mode: {
+          enable: true  // MODO SANDBOX para testes - email não é enviado de verdade
+        }
+      }
     }
 
     console.log('📨 Sending to SendGrid:', {
