@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Netlify</title>
+</head>
+<body>
+    <h1>🔍 Debug Deploy Netlify</h1>
+    <p><strong>Timestamp:</strong> <span id="timestamp"></span></p>
+    <p><strong>URL:</strong> <span id="url"></span></p>
+    <p><strong>User Agent:</strong> <span id="userAgent"></span></p>
+    
+    <h2>Teste de JavaScript</h2>
+    <div id="jsTest">❌ JavaScript não executou</div>
+    
+    <h2>Teste de Fetch</h2>
+    <div id="fetchTest">Testando...</div>
+    
+    <script>
+        // Teste básico JavaScript
+        document.getElementById('timestamp').textContent = new Date().toISOString();
+        document.getElementById('url').textContent = window.location.href;
+        document.getElementById('userAgent').textContent = navigator.userAgent;
+        document.getElementById('jsTest').innerHTML = '✅ JavaScript funcionando';
+        
+        // Teste de conectividade
+        fetch('/manifest.json')
+            .then(response => {
+                if (response.ok) {
+                    document.getElementById('fetchTest').innerHTML = '✅ Fetch funcionando - arquivos acessíveis';
+                } else {
+                    document.getElementById('fetchTest').innerHTML = '❌ Fetch error: ' + response.status;
+                }
+            })
+            .catch(error => {
+                document.getElementById('fetchTest').innerHTML = '❌ Fetch falhou: ' + error.message;
+            });
+    </script>
+</body>
+</html>
