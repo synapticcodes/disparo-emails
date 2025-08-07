@@ -96,37 +96,62 @@ export const auth = {
   getUser: () => supabase.auth.getUser(),
 }
 
-// Envio de emails (usando Supabase diretamente)
+// Envio de emails (usando Edge Functions do Supabase)
 export const emails = {
   sendDirect: async (data) => {
-    // Por enquanto, apenas salvar no banco - SendGrid precisa de Edge Function
-    const { data: emailLog, error } = await supabase
-      .from('email_logs')
-      .insert({
-        to_email: data.to,
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !session) {
+      throw new Error('User not authenticated');
+    }
+
+    const response = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/send-email`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${session.access_token}`,
+        'Content-Type': 'application/json',
+        'apikey': process.env.REACT_APP_SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        to: data.to,
         subject: data.subject,
-        html_content: data.html,
-        status: 'queued',
-        created_at: new Date().toISOString()
-      });
-    
-    if (error) throw error;
-    return { data: emailLog };
+        html: data.html,
+        type: 'direct'
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to send email');
+    }
+
+    const result = await response.json();
+    return { data: result };
   },
   sendCampaign: async (data) => {
-    // Salvar campanha como enviada
-    const { data: campaign, error } = await supabase
-      .from('campanhas')
-      .update({ 
-        status: 'enviada',
-        sent_at: new Date().toISOString()
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !session) {
+      throw new Error('User not authenticated');
+    }
+
+    const response = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/send-campaign`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${session.access_token}`,
+        'Content-Type': 'application/json',
+        'apikey': process.env.REACT_APP_SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        campaign_id: data.campaign_id
       })
-      .eq('id', data.campaign_id)
-      .select()
-      .single();
-    
-    if (error) throw error;
-    return { data: campaign };
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to send campaign');
+    }
+
+    const result = await response.json();
+    return { data: result };
   },
 }
 
