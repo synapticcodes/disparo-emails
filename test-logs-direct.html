@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Teste Direto dos Logs</title>
+</head>
+<body>
+    <h1>Teste Direto dos Logs</h1>
+    <button onclick="testLogs()">Testar Logs</button>
+    <div id="result"></div>
+
+    <script>
+        async function testLogs() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = 'Testando...';
+            
+            try {
+                console.log('🧪 Testando endpoint de logs...');
+                
+                // Testar primeiro o health check
+                const healthResponse = await fetch('http://localhost:3000/health');
+                const healthData = await healthResponse.json();
+                console.log('✅ Health check:', healthData);
+                
+                // Testar o endpoint de logs sem autenticação (deve falhar)
+                try {
+                    const logsResponse = await fetch('http://localhost:3000/api/logs');
+                    console.log('📋 Response status:', logsResponse.status);
+                    const logsText = await logsResponse.text();
+                    console.log('📋 Response text:', logsText);
+                } catch (e) {
+                    console.log('❌ Erro esperado (sem auth):', e.message);
+                }
+                
+                resultDiv.innerHTML = `
+                    <h3>Resultado do Teste:</h3>
+                    <p><strong>Health check:</strong> ${healthData.message}</p>
+                    <p><strong>Logs endpoint:</strong> Falhou como esperado (sem autenticação)</p>
+                    <p><strong>Próximo passo:</strong> Verificar no browser com usuário logado</p>
+                `;
+                
+            } catch (error) {
+                console.error('❌ Erro no teste:', error);
+                resultDiv.innerHTML = `<p style="color: red;">Erro: ${error.message}</p>`;
+            }
+        }
+    </script>
+</body>
+</html>

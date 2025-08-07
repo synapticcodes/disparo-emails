@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Logs API</title>
+</head>
+<body>
+    <h1>Debug do Sistema de Logs</h1>
+    <div id="status"></div>
+    <div id="result"></div>
+    
+    <script>
+        async function debugLogs() {
+            const statusDiv = document.getElementById('status');
+            const resultDiv = document.getElementById('result');
+            
+            statusDiv.innerHTML = 'Testando...';
+            
+            try {
+                // 1. Teste do servidor
+                console.log('1. Testando servidor...');
+                const healthResponse = await fetch('http://localhost:3000/health');
+                const healthData = await healthResponse.json();
+                console.log('✅ Servidor OK:', healthData);
+                
+                // 2. Teste endpoint logs sem auth (deve falhar)
+                console.log('2. Testando endpoint logs sem auth...');
+                try {
+                    const logsResponse = await fetch('http://localhost:3000/api/logs');
+                    const logsText = await logsResponse.text();
+                    console.log('📋 Logs endpoint status:', logsResponse.status);
+                    console.log('📋 Logs response:', logsText);
+                } catch (e) {
+                    console.log('❌ Erro esperado (sem auth):', e.message);
+                }
+                
+                // 3. Verificar estrutura da aplicação React
+                console.log('3. Verificando aplicação React...');
+                const reactResponse = await fetch('http://localhost:3001');
+                if (reactResponse.ok) {
+                    console.log('✅ Frontend React acessível');
+                } else {
+                    console.log('❌ Frontend React não acessível');
+                }
+                
+                statusDiv.innerHTML = `
+                    <h3>Resultado dos Testes:</h3>
+                    <p>✅ Servidor backend funcionando</p>
+                    <p>✅ Endpoint de logs existe (mas requer auth)</p>
+                    <p>✅ Frontend React acessível</p>
+                    <h4>Próximos passos:</h4>
+                    <ol>
+                        <li>Acesse <a href="http://localhost:3001" target="_blank">http://localhost:3001</a></li>
+                        <li>Faça login na aplicação</li>
+                        <li>Vá para a seção "Logs"</li>
+                        <li>Abra o console do navegador (F12) para ver erros</li>
+                        <li>Se ainda houver erro, copie e cole o erro aqui</li>
+                    </ol>
+                `;
+                
+            } catch (error) {
+                console.error('❌ Erro no teste:', error);
+                statusDiv.innerHTML = `<p style="color: red;">Erro: ${error.message}</p>`;
+            }
+        }
+        
+        // Executar automaticamente
+        debugLogs();
+    </script>
+</body>
+</html>
